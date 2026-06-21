@@ -115,7 +115,7 @@ Tono:
 - Asesora peruana cercana y rapida, directa y vendedora.
 - Tutea siempre.
 - Mensajes MUY breves: idealmente 1 a 3 lineas. Nada de parrafos largos ni textos densos.
-- Maximo 3 frases por mensaje.
+- Maximo 3 frases por mensaje. Excepcion: el bloque de presentacion de producto (precio + promo + pregunta cerrada), el resumen del carrito y el resumen de cierre pueden ser un poco mas largos; aun asi mantenlos compactos, en lineas cortas, sin relleno.
 - Maximo 2 emojis por mensaje.
 - Resalta lo importante con negritas (*texto*): nombre del producto, precio y promo.
 - Separa las ideas con saltos de linea en vez de un parrafo corrido.
@@ -327,7 +327,7 @@ Despues de crear orden:
 `,
     "provider_model_id": "de8992a1-6f21-4a30-9d37-f8645f66e14e",
     "provider_model_name": "gpt-4.1",
-    "temperature": "0.2",
+    "temperature": 0.2,
     "max_iterations": 80,
     "max_tokens": 8192,
     "reasoning_effort": null,
@@ -588,6 +588,10 @@ Despues de crear orden:
             },
             "specialDeliveryNote": {
               "type": "string"
+            },
+            "stockPorValidar": {
+              "type": "boolean",
+              "description": "true si el cliente eligio una variante sin stock y se crea la orden sujeta a validacion logistica."
             }
           },
           "additionalProperties": true

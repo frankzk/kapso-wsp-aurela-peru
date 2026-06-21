@@ -1,5 +1,12 @@
 const FREE_SHIPPING_THRESHOLD = 40;
 const SHIPPING_FEE_UNDER_THRESHOLD = 10;
+const MAX_QUANTITY = 50; // tope de seguridad: evita ordenes accidentales de miles de unidades
+
+function clampQuantity(raw) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(MAX_QUANTITY, n);
+}
 
 async function handler(request, env = globalThis) {
   return handleRequest(request, env);
@@ -64,7 +71,7 @@ function normalizeLineItems(items) {
       productTitle: String(item.productTitle || item.product_title || item.product?.title || item.title || "").trim(),
       variantId: String(item.variantId || item.variant_id || item.variant?.id || "").trim(),
       variantTitle: String(item.variantTitle || item.variant_title || item.variant?.title || "").trim(),
-      quantity: Math.max(1, Number.parseInt(item.quantity || item.qty || 1, 10)),
+      quantity: clampQuantity(item.quantity ?? item.qty ?? 1),
       unitPrice: Number(item.unitPrice ?? item.unit_price ?? item.price ?? item.variant?.price),
     }))
     .filter((item) => item.productId && item.quantity > 0 && Number.isFinite(item.unitPrice));

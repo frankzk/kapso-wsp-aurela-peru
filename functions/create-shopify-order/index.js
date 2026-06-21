@@ -1,5 +1,18 @@
 const DEFAULT_SHOP_DOMAIN = "aurela-peru.myshopify.com";
 const DEFAULT_API_VERSION = "2026-04";
+const MAX_QUANTITY = 50; // tope de seguridad: evita ordenes accidentales de miles de unidades
+
+function clampQuantity(raw) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(MAX_QUANTITY, n);
+}
+
+// Limpia texto libre del cliente antes de meterlo en la nota de Shopify:
+// colapsa saltos de linea y espacios, recorta y limita largo.
+function sanitizeNoteText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 300);
+}
 
 async function handler(request, env = globalThis) {
   return handleRequest(request, env);
@@ -199,7 +212,7 @@ function normalizeLineItems(items) {
       productUrl: String(item.productUrl || item.product_url || item.url || item.link || "").trim(),
       variantId: normalizeVariantId(item.variantId || item.variant_id || item.variant?.id),
       variantTitle: String(item.variantTitle || item.variant_title || item.variant?.title || item.color || item.modelo || item.model || "").trim(),
-      quantity: Math.max(1, Number.parseInt(item.quantity || item.qty || 1, 10)),
+      quantity: clampQuantity(item.quantity ?? item.qty ?? 1),
     }))
     .filter((item) => item.quantity > 0 && (item.variantId || item.handle || item.productTitle || item.productUrl));
 }
@@ -428,8 +441,9 @@ function buildNote(input) {
     `Referencia: ${customer.reference || customer.referencia || ""}`,
   ];
 
-  if (input.specialDeliveryNote || input.special_delivery_note) {
-    lines.push(`Fecha/hora solicitada: ${input.specialDeliveryNote || input.special_delivery_note}`);
+  const specialNote = sanitizeNoteText(input.specialDeliveryNote || input.special_delivery_note);
+  if (specialNote) {
+    lines.push(`Fecha/hora solicitada: ${specialNote}`);
   }
 
   if (input.conversationId) {

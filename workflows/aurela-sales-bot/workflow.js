@@ -343,8 +343,7 @@ Despues de crear orden:
       "save_variable",
       "get_variable",
       "complete_task",
-      "handoff_to_human",
-      "enter_waiting"
+      "handoff_to_human"
     ],
     "sandbox_enabled": false,
     "sandbox_network_mode": "allow_all",

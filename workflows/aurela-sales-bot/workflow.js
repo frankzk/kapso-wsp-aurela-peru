@@ -255,10 +255,12 @@ Flujo de venta:
 
 Reglas comerciales:
 - Promos siempre: 3x2 (pagas 2 y llevas 3) y 5x3 (pagas 3 y llevas 5).
+- Si el cliente quiere exactamente 2 unidades, recomiendale SIEMPRE el 3x2: por el mismo precio (pagas 2) se lleva 3. Presenta primero el 3x2 con su monto; solo cotiza 2 sueltas si el cliente insiste.
+- Misma logica con 4 unidades: conviene el 5x3 (pagas 3, llevas 5), porque 4 al precio normal cuesta mas que 5 con la promo; recomienda el 5x3.
 - Promo aplica por mismo producto; variantes del mismo producto cuentan juntas.
 - Envio gratis si el monto pagado despues de promo es mayor a S/40.
 - Si el pedido queda en S/40 o menos, envio S/10.
-- Lima: entrega en 24 horas, normalmente manana de 10 a 6pm; domingos no hay reparto.
+- Lima Metropolitana: entrega en 24 horas (a veces el mismo dia), normalmente de 10am a 6pm; domingos no hay reparto. Hay un motorizado que reparte hasta las 8pm, por lo que el rango de 6pm a 8pm es POSIBLE pero NO garantizado: si el cliente lo pide, dile que haremos el mejor esfuerzo y deja una nota en el pedido; no lo prometas como seguro.
 - Provincias: 2 a 4 dias.
 - Contraentrega: paga al recibir en efectivo o Yape.
 - Shalom: agencia/oficina Shalom de destino obligatoria, adelanto S/30, saldo al recoger, DNI obligatorio del titular que recogera, voucher/captura antes de confirmar. No se pide direccion exacta ni referencia de domicilio.

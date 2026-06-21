@@ -51,36 +51,36 @@
     "shopify-product-lookup": {
       "files": {
         "functions/shopify-product-lookup/function.yaml": "9a7e173f5998f3002b03b8f6cf803c32b2152441cc535e82dad889bdf00335d0",
-        "functions/shopify-product-lookup/index.js": "b03293160587e32dacac088096ea8f14ed95e7933030178f47d03c1edca69f67"
+        "functions/shopify-product-lookup/index.js": "06c9bf426feea37f50c72c808a7932c4c7f06f27b00c803e50ddcb73e8712eff"
       },
       "id": "b95fa79b-ccea-4f74-b743-940792947e5e",
-      "lastDeployedAt": "2026-06-21T15:09:39-04:00",
-      "lockVersion": 38,
+      "lastDeployedAt": "2026-06-21T18:32:10-04:00",
+      "lockVersion": 40,
       "slug": "shopify-product-lookup",
       "status": "deployed",
-      "updatedAt": "2026-06-21T15:09:39-04:00"
+      "updatedAt": "2026-06-21T18:32:10-04:00"
     }
   },
   "version": 1,
   "workflows": {
     "aurela-sales-bot": {
       "files": {
-        "workflows/aurela-sales-bot/definition.json": "aeda7261d6b58fd8caa84314a8dbcc2e08cfa77a33de43da3cd10ac2107bba8b",
+        "workflows/aurela-sales-bot/definition.json": "6af9372a35749121219ba08ad1a2a22fd225f5c06eaeed9877fe6bc6a273e9c2",
         "workflows/aurela-sales-bot/workflow.yaml": "68ca00c3ebaf5fc6c73bfed5f04bb21badd94f33ef24701b051bf08eaed98d0e"
       },
       "generatedSource": {
-        "hash": "c2eb78c25ab5f90c1ab60c7c88114b16d600104fb3c9c8e751514429a08d383c",
+        "hash": "ce1cab77ff2da4a6cce58a24503314e6178c16d482a7d2d135b31d3e9728e74a",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 65,
+      "lockVersion": 70,
       "slug": "aurela-sales-bot",
       "sourceFile": {
-        "hash": "87f895c6aa3d3e82342862a55b7dc30d1aaad83233f0484d15c652e2ceb0e596",
+        "hash": "8cfbf30f170b20cf7f2f19aea24eed3e13102872cd207ca019b576af67f25a56",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "status": "active",
-      "updatedAt": "2026-06-21T17:19:51-04:00"
+      "updatedAt": "2026-06-21T18:35:26-04:00"
     }
   }
 }

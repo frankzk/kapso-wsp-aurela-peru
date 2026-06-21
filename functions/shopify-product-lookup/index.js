@@ -971,12 +971,13 @@ function buildProductFoundMessage(product) {
   const options = visibleOptions(product);
   const optionsLine = options.length ? `\nOpciones disponibles: ${options.join("; ")}` : "";
   const labels = productUnitLabels(product);
-  const hasSize = hasOption(product, ["talla", "size"]);
-  const nextQuestion = hasSize
-    ? `Que talla y cuantos ${labels.plural} deseas llevar?`
-    : `${labels.quantityQuestion} deseas llevar?`;
+  const hasSize = hasOption(product, ["talla", "tallas", "size", "tamano", "tamaño"]);
 
   if (Number.isFinite(price) && Number.isFinite(maxPrice) && price === maxPrice) {
+    // Closed two-option close: 1 unit vs the entry promo (3x2). Never ask if they want the price.
+    const closing = hasSize
+      ? `Que talla quieres? Y te llevas 1 ${labels.singular} por *S/ ${formatMoney(price)}* o aprovechas el 3x2 (3 ${labels.plural} por *S/ ${formatMoney(price * 2)}*)?`
+      : `Te llevas 1 ${labels.singular} por *S/ ${formatMoney(price)}* o aprovechas el 3x2 (3 ${labels.plural} por *S/ ${formatMoney(price * 2)}*)?`;
     return [
       `Si, lo tengo: *${product.title}*.`,
       `El precio es de *S/ ${formatMoney(price)}* por ${labels.singular}.${optionsLine}${stockLine}`,
@@ -986,15 +987,14 @@ function buildProductFoundMessage(product) {
       `• 3x2: Lleva 3 ${labels.plural} por *S/ ${formatMoney(price * 2)}* (pagas solo 2)`,
       `• 5x3: Lleva 5 ${labels.plural} por *S/ ${formatMoney(price * 3)}* (pagas solo 3)`,
       "",
-      nextQuestion,
+      closing,
     ].join("\n");
   }
 
   return [
     `Si, lo tengo: *${product.title}*.`,
     `Precio: *${priceText}*.${optionsLine}${stockLine}`,
-    "Cuando eliges cantidad te calculo 1, 3x2 y 5x3 con el total exacto.",
-    nextQuestion,
+    `Te llevas 1 ${labels.singular} o aprovechas el 3x2 (pagas 2 y llevas 3)? Te paso el total exacto al toque.`,
   ].join("\n");
 }
 

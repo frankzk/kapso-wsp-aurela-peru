@@ -115,7 +115,7 @@ async function handleRequest(request, env = globalThis) {
         "No escribas ni pegues estas URLs en texto al cliente.",
         "No uses Markdown de imagen.",
       ].join(" "),
-      followUpText: "Te muestro esas opciones. Cual color te gusta mas?",
+      followUpText: "Te muestro las fotos reales. Despues de enviarlas, ofrece precio y promo y cierra con la pregunta cerrada de dos opciones (1 unidad/par vs 3x2). No preguntes si quiere saber el precio.",
     });
   } catch (error) {
     return json({

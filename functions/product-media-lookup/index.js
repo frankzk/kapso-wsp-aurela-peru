@@ -22,6 +22,35 @@ const STOPWORDS = new Set([
   "ver",
 ]);
 
+// Synonyms so customer terms match catalog wording (e.g. "medias" == "calcetines" in Peru).
+const SYNONYM_GROUPS = [
+  ["medias", "media", "calcetines", "calcetin", "calceta", "calcetas", "soquetes", "soquete"],
+];
+
+const SYNONYM_MAP = buildSynonymMap(SYNONYM_GROUPS);
+
+function buildSynonymMap(groups) {
+  const map = new Map();
+  for (const group of groups) {
+    const normalized = [...new Set(group.map((word) => normalizeSearchText(word)).filter(Boolean))];
+    for (const word of normalized) {
+      const set = map.get(word) || new Set();
+      normalized.forEach((other) => set.add(other));
+      map.set(word, set);
+    }
+  }
+  return map;
+}
+
+function tokenVariants(token) {
+  const set = SYNONYM_MAP.get(token);
+  return set ? [...set] : [token];
+}
+
+function searchableHasToken(searchable, token) {
+  return tokenVariants(token).some((variant) => variant && searchable.includes(variant));
+}
+
 async function handler(request, env = globalThis) {
   return handleRequest(request, env);
 }
@@ -341,14 +370,15 @@ function scoreProduct(product, query) {
   if (query.normalized && searchable.includes(query.normalized)) score += 20;
 
   for (const token of query.tokens) {
-    if (handle === token) score += 25;
-    else if (handle.includes(token)) score += 12;
-    if (title === token || title.startsWith(`${token} `)) score += 22;
-    else if (title.includes(token)) score += 14;
-    else if (searchable.includes(token)) score += 3;
+    const variants = tokenVariants(token);
+    if (variants.some((variant) => handle === variant)) score += 25;
+    else if (variants.some((variant) => handle.includes(variant))) score += 12;
+    if (variants.some((variant) => title === variant || title.startsWith(`${variant} `))) score += 22;
+    else if (variants.some((variant) => title.includes(variant))) score += 14;
+    else if (variants.some((variant) => searchable.includes(variant))) score += 3;
   }
 
-  const matchedTokens = query.tokens.filter((token) => searchable.includes(token)).length;
+  const matchedTokens = query.tokens.filter((token) => searchableHasToken(searchable, token)).length;
   if (matchedTokens === query.tokens.length && query.tokens.length >= 2) score += 10;
   if (matchedTokens < Math.min(2, query.tokens.length)) score = 0;
   return score;

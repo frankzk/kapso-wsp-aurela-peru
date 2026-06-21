@@ -27,14 +27,14 @@
     "product-media-lookup": {
       "files": {
         "functions/product-media-lookup/function.yaml": "69f2f86bddc60d4c3370f2e3d59f0de2903c8d175079da359b656293e46150fb",
-        "functions/product-media-lookup/index.js": "1ceb1a747b65a4f6841f4635bd34ab4d8c75dd17ad18760deae619fd1c3c555d"
+        "functions/product-media-lookup/index.js": "9fc49ef2dfbb8d74e02c3d2fcb30ad6a8a909ed2f2cde202763b80cf6a60e874"
       },
       "id": "fd613abc-f34d-4438-9645-2565bce52455",
-      "lastDeployedAt": "2026-06-20T22:18:17-04:00",
-      "lockVersion": 1,
+      "lastDeployedAt": "2026-06-21T01:41:01-04:00",
+      "lockVersion": 3,
       "slug": "product-media-lookup",
       "status": "deployed",
-      "updatedAt": "2026-06-20T22:18:17-04:00"
+      "updatedAt": "2026-06-21T01:41:01-04:00"
     },
     "quote-order": {
       "files": {
@@ -51,14 +51,14 @@
     "shopify-product-lookup": {
       "files": {
         "functions/shopify-product-lookup/function.yaml": "9a7e173f5998f3002b03b8f6cf803c32b2152441cc535e82dad889bdf00335d0",
-        "functions/shopify-product-lookup/index.js": "d6dbd0e7b81e8b4720c6080f3111268d14fcdff8d95fbdbbfb2de4739bf79ccb"
+        "functions/shopify-product-lookup/index.js": "26ab6966163c27abe5a0ad45206d0d9b5b5888185228edf44e44eb1f91b42f1e"
       },
       "id": "b95fa79b-ccea-4f74-b743-940792947e5e",
-      "lastDeployedAt": "2026-06-20T23:01:40-04:00",
-      "lockVersion": 30,
+      "lastDeployedAt": "2026-06-21T01:40:57-04:00",
+      "lockVersion": 32,
       "slug": "shopify-product-lookup",
       "status": "deployed",
-      "updatedAt": "2026-06-20T23:01:40-04:00"
+      "updatedAt": "2026-06-21T01:40:57-04:00"
     }
   },
   "version": 1,

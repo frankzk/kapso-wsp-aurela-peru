@@ -158,7 +158,42 @@ const CATEGORY_RULES = [
     triggers: ["auto", "carro", "vehiculo", "vehiculo", "car"],
     terms: ["auto", "carro", "vehiculo", "vehiculo", "car"],
   },
+  {
+    key: "medias",
+    label: "medias",
+    triggers: ["media", "medias", "calcetin", "calcetines", "calceta", "calcetas", "soquete", "soquetes"],
+    terms: ["media", "medias", "calcetin", "calcetines", "calceta", "soquete"],
+  },
 ];
+
+// Synonyms so customer terms match catalog wording (e.g. "medias" == "calcetines" in Peru).
+const SYNONYM_GROUPS = [
+  ["medias", "media", "calcetines", "calcetin", "calceta", "calcetas", "soquetes", "soquete"],
+];
+
+const SYNONYM_MAP = buildSynonymMap(SYNONYM_GROUPS);
+
+function buildSynonymMap(groups) {
+  const map = new Map();
+  for (const group of groups) {
+    const normalized = [...new Set(group.map((word) => normalizeSearchText(word)).filter(Boolean))];
+    for (const word of normalized) {
+      const set = map.get(word) || new Set();
+      normalized.forEach((other) => set.add(other));
+      map.set(word, set);
+    }
+  }
+  return map;
+}
+
+function tokenVariants(token) {
+  const set = SYNONYM_MAP.get(token);
+  return set ? [...set] : [token];
+}
+
+function searchableHasToken(searchable, token) {
+  return tokenVariants(token).some((variant) => variant && searchable.includes(variant));
+}
 
 async function handler(request, env = globalThis) {
   return handleRequest(request, env);
@@ -537,21 +572,23 @@ function scoreCatalogProduct(product, query) {
     product.vendor,
   ].filter(Boolean).join(" "));
 
+  const handle = normalizeSearchText(product.handle || "");
+  const title = normalizeSearchText(product.title || "");
+
   let score = 0;
   if (query.normalized && searchable.includes(query.normalized)) score += 40;
-  if (normalizeSearchText(product.title || "").includes(query.normalized)) score += 20;
+  if (query.normalized && title.includes(query.normalized)) score += 20;
 
   for (const token of query.tokens) {
-    const handle = normalizeSearchText(product.handle || "");
-    const title = normalizeSearchText(product.title || "");
-    if (handle === token) score += 28;
-    else if (handle.includes(token)) score += 12;
-    if (title === token || title.startsWith(`${token} `)) score += 24;
-    else if (title.includes(token)) score += 14;
-    else if (searchable.includes(token)) score += 3;
+    const variants = tokenVariants(token);
+    if (variants.some((variant) => handle === variant)) score += 28;
+    else if (variants.some((variant) => handle.includes(variant))) score += 12;
+    if (variants.some((variant) => title === variant || title.startsWith(`${variant} `))) score += 24;
+    else if (variants.some((variant) => title.includes(variant))) score += 14;
+    else if (variants.some((variant) => searchable.includes(variant))) score += 3;
   }
 
-  const matchedTokens = query.tokens.filter((token) => searchable.includes(token)).length;
+  const matchedTokens = query.tokens.filter((token) => searchableHasToken(searchable, token)).length;
   if (matchedTokens === query.tokens.length && query.tokens.length >= 2) score += 12;
   if (matchedTokens < Math.min(2, query.tokens.length)) score = 0;
 

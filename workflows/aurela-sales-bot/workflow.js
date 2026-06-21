@@ -262,9 +262,20 @@ Deriva a humano si:
 - Zona sin contraentrega con agencia/voucher pendiente.
 - Cliente pide algo fuera de venta.
 
-Seguimientos:
-- Si el cliente abandona, se debe continuar segun etapa con seguimientos a 10 min, 30 min, 4 h, 12 h y 24 h cuando la plataforma lo permita.
-- Deten seguimiento si responde, compra, pide humano o dice que no.
+Seguimientos automaticos (los gestiona el workflow, NO tu con tiempos):
+- Cuando terminas de responder y quedas esperando una respuesta del cliente, llama a complete_task para liberar el turno. El sistema enviara seguimientos automaticos si el cliente no responde (10min, 30min, 4h, 12h y 22h) y te devolvera el control apenas el cliente escriba. No anuncies al cliente que le haras seguimiento ni menciones tiempos.
+- Antes de llamar complete_task, SIEMPRE guarda dos variables con save_variable:
+  • stage: la etapa actual, usando uno de estos valores exactos: explorando, producto_mostrado, esperando_variante, datos_envio, esperando_confirmacion, esperando_voucher, orden_creada, no_interesado, reclamo.
+  • followup_hint: un recordatorio corto, calido y especifico de la etapa, SIN links, en minuscula inicial para que calce dentro de una frase. Ejemplos:
+    - "quedaste eligiendo la talla de tus *CloudSlides*"
+    - "solo faltan tus datos de envio para dejar listo tu pedido"
+    - "quedamos en que enviabas el voucher del adelanto de S/30 por Shalom"
+- El sistema DETIENE los seguimientos cuando stage es orden_creada, no_interesado o reclamo, y cuando derivas con handoff_to_human. Marca:
+  • stage="orden_creada" cuando create_shopify_order devuelve ok=true.
+  • stage="no_interesado" si el cliente dice que no le interesa o no por ahora.
+  • stage="reclamo" si hay reclamo o cliente molesto (y deriva a humano).
+- Si el cliente quedo esperando enviar voucher/pago (Shalom/Olva), usa stage="esperando_voucher": SI se le envian recordatorios amables para que mande el voucher.
+- Deten el seguimiento de inmediato si el cliente responde, compra, pide humano o dice que no.
 
 Resumen corto antes de crear orden (contraentrega):
 - Muestra un resumen BREVE, sin repetir promos ni explicaciones. Formato:
@@ -569,5 +580,120 @@ Despues de crear orden:
 });
 
 workflow.addEdge(START, "sales-agent");
+
+// ============================================================
+// Seguimientos automaticos (re-engagement ladder)
+// Cadencia desde el ultimo mensaje del cliente: 10min, 30min, 4h, 12h, 22h.
+// Cada Wait reanuda por respuesta del cliente o por timeout; un Decide por
+// funcion (check-coverage, modo ruteo) decide la ruta. Antes de cada envio se valida el
+// horario de Peru (silencio 00:00-07:00). Si el cliente responde en cualquier
+// punto, vuelve al agente y la cadencia se reinicia.
+// ============================================================
+
+const PHONE_NUMBER_ID = "597907523413541";
+const HOLD_SECONDS = 1800; // re-chequeo cada 30 min durante horario de silencio
+
+const FOLLOWUPS = [
+  { step: 1, wait: 600 },   // 10 min
+  { step: 2, wait: 1200 },  // +20 min -> 30 min
+  { step: 3, wait: 12600 }, // +3.5 h  -> 4 h
+  { step: 4, wait: 28800 }, // +8 h    -> 12 h
+  { step: 5, wait: 36000 }, // +10 h   -> 22 h
+];
+
+const FOLLOWUP_MESSAGES = {
+  1: "Hola 👋 {{vars.followup_hint}} ¿Lo retomamos? 😊",
+  2: "Sigo por aca para ayudarte 🙌 {{vars.followup_hint}} ¿Avanzamos con tu pedido?",
+  3: "{{vars.followup_hint}} 😊 Si quieres lo dejamos listo hoy, ¿te ayudo a cerrarlo?",
+  4: "Te recuerdo que {{vars.followup_hint}} Las promos siguen disponibles, ¿lo cerramos?",
+  5: "Ultimo recordatorio 🙏 {{vars.followup_hint}} Si prefieres lo vemos en otro momento, aqui estare.",
+};
+
+// Tras completar el agente: seguir con la escalera o terminar (estado terminal).
+workflow.addNode("fu-terminal", {
+  type: "decide",
+  decisionType: "function",
+  functionSlug: "check-coverage",
+  conditions: [
+    { label: "seguir", description: "La conversacion sigue abierta: continuar con la cadencia de seguimientos." },
+    { label: "terminar", description: "Estado terminal (orden creada, no interesado, reclamo o handoff): no enviar mas seguimientos." },
+  ],
+}, { position: { x: 1000, y: 100 }, displayName: "Seguir o terminar" });
+workflow.addEdge("sales-agent", "fu-terminal");
+
+workflow.addNode("fu-end", {
+  type: "set_variable",
+  variableName: "followup_done",
+  valueType: "boolean",
+  variableValue: true,
+}, { position: { x: 1000, y: 320 }, displayName: "Fin (terminal)" });
+workflow.addEdge("fu-terminal", "fu-end", { label: "terminar" });
+
+workflow.addEdge("fu-terminal", "fu-w1", { label: "seguir" });
+
+for (const { step, wait } of FOLLOWUPS) {
+  const baseX = 1320 + (step - 1) * 320;
+  const w = `fu-w${step}`;
+  const wr = `fu-wr${step}`;
+  const g = `fu-g${step}`;
+  const h = `fu-h${step}`;
+  const s = `fu-s${step}`;
+
+  // Espera del intervalo.
+  workflow.addNode(w, {
+    type: "wait_for_response",
+    timeoutSeconds: wait,
+  }, { position: { x: baseX, y: 100 }, displayName: `Espera ${step}` });
+  workflow.addEdge(w, wr);
+
+  // Reanudacion: respondio el cliente (-> agente) o fue timeout (-> horario).
+  workflow.addNode(wr, {
+    type: "decide",
+    decisionType: "function",
+    functionSlug: "check-coverage",
+    conditions: [
+      { label: "respondio", description: "El cliente respondio durante la espera: devolver el control al agente." },
+      { label: "timeout", description: "Vencio la espera sin respuesta del cliente: evaluar el envio del seguimiento." },
+    ],
+  }, { position: { x: baseX, y: 240 }, displayName: `Reanudacion ${step}` });
+  workflow.addEdge(wr, "sales-agent", { label: "respondio" });
+  workflow.addEdge(wr, g, { label: "timeout" });
+
+  // Horario Peru: enviar ahora o esperar (silencio 00:00-07:00).
+  workflow.addNode(g, {
+    type: "decide",
+    decisionType: "function",
+    functionSlug: "check-coverage",
+    conditions: [
+      { label: "enviar", description: "Horario permitido en Peru: enviar el seguimiento ahora." },
+      { label: "esperar", description: "Horario de silencio (00:00-07:00 Peru): esperar y reintentar mas tarde." },
+    ],
+  }, { position: { x: baseX, y: 380 }, displayName: `Horario ${step}` });
+  workflow.addEdge(g, s, { label: "enviar" });
+  workflow.addEdge(g, h, { label: "esperar" });
+
+  // Espera corta y re-chequeo de horario (reutiliza la reanudacion del paso).
+  workflow.addNode(h, {
+    type: "wait_for_response",
+    timeoutSeconds: HOLD_SECONDS,
+  }, { position: { x: baseX + 150, y: 380 }, displayName: `Espera horario ${step}` });
+  workflow.addEdge(h, wr);
+
+  // Envio del seguimiento.
+  workflow.addNode(s, {
+    type: "send_text",
+    message: FOLLOWUP_MESSAGES[step],
+    phoneNumberId: PHONE_NUMBER_ID,
+  }, { position: { x: baseX, y: 520 }, displayName: `Seguimiento ${step}` });
+  workflow.addEdge(s, step < 5 ? `fu-w${step + 1}` : "fu-lost");
+}
+
+// Sin respuesta tras el ultimo seguimiento: lead perdido y fin.
+workflow.addNode("fu-lost", {
+  type: "set_variable",
+  variableName: "stage",
+  valueType: "string",
+  variableValue: "lead_perdido",
+}, { position: { x: 1320 + 5 * 320, y: 520 }, displayName: "Lead perdido" });
 
 export default workflow;

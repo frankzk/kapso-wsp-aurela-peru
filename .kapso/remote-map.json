@@ -3,14 +3,14 @@
     "check-coverage": {
       "files": {
         "functions/check-coverage/function.yaml": "ac1fd7069d5ebd0442d0bae413e8d6ec43eafed28c57cd19bb2f8cc08e3e416b",
-        "functions/check-coverage/index.js": "d1866bb17e168c30c7f2f940b62ad5fc6e8c4de47d29a3d465a7d60d633d6b1f"
+        "functions/check-coverage/index.js": "f9d48e6475101edad6b336b7dd4b2e6914117ceacc584766e5e221db5a268bb7"
       },
       "id": "f9ddb618-7f39-4ee3-af23-4d9733ba5d55",
-      "lastDeployedAt": "2026-06-20T23:05:19-04:00",
-      "lockVersion": 26,
+      "lastDeployedAt": "2026-06-21T11:36:08-04:00",
+      "lockVersion": 28,
       "slug": "check-coverage",
       "status": "deployed",
-      "updatedAt": "2026-06-20T23:05:19-04:00"
+      "updatedAt": "2026-06-21T11:36:08-04:00"
     },
     "create-shopify-order": {
       "files": {
@@ -65,7 +65,7 @@
   "workflows": {
     "aurela-sales-bot": {
       "files": {
-        "workflows/aurela-sales-bot/definition.json": "5db28ecafbd04a8e087b8eb8cabf706d1b60ec24f85c7ac449d3cc027a82429d",
+        "workflows/aurela-sales-bot/definition.json": "808e77e60e14a8c6b96855cd275d258e7667d5c315d99e0534febddabe1bc924",
         "workflows/aurela-sales-bot/workflow.yaml": "dd2461d9a2defc10e7b6c6f3e241420d914cc144d46146a79af5ffbbe09f9006"
       },
       "generatedSource": {
@@ -73,14 +73,14 @@
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 44,
+      "lockVersion": 45,
       "slug": "aurela-sales-bot",
       "sourceFile": {
-        "hash": "cb2c4a6361c4e384930a70d5ca67eb54e355c7f0c052f3ef2f634d7c349fc3ab",
+        "hash": "46e5b19651d702f5791bfa9b1f7b995361851df2d8fb6d8f3c32ca2a602e8d5e",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "status": "active",
-      "updatedAt": "2026-06-21T01:52:55-04:00"
+      "updatedAt": "2026-06-21T11:39:24-04:00"
     }
   }
 }

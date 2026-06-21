@@ -56,6 +56,14 @@ if (typeof addEventListener === "function") {
 
 async function handleRequest(request) {
   const payload = await readJson(request);
+
+  // Follow-up ladder routing: when invoked by a Decide node, the payload carries
+  // `available_edges`. Coverage tool calls never include it, so this branch is
+  // inert for the normal coverage flow.
+  if (Array.isArray(payload.available_edges)) {
+    return routeFollowup(payload);
+  }
+
   const input = unwrapInput(payload);
   const region = normalizePlace(input.region || input.departamento || input.department || input.province);
   const province = normalizePlace(input.province || input.provincia || input.city);
@@ -153,6 +161,74 @@ async function handleRequest(request) {
     normalized: { district, province, region },
     message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nLuego te paso el Yape para el adelanto de S/30 y con el voucher lo pasamos a validación ✅",
   });
+}
+
+// ----- Follow-up ladder decide routing -----
+// Serves three decide types, detected by available_edges:
+//   resume reason  -> ["respondio", "timeout"]
+//   terminal check -> ["seguir", "terminar"]
+//   quiet hours    -> ["enviar", "esperar"]  (Peru UTC-5, quiet 00:00-06:59)
+const FOLLOWUP_TERMINAL_MARKERS = [
+  "orden creada",
+  "orden_creada",
+  "lead_perdido",
+  "lead perdido",
+  "handoff",
+  "derivad",
+  "no_interes",
+  "no interes",
+  "reclamo",
+  "molesto",
+  "cancel",
+];
+
+function routeFollowup(payload) {
+  try {
+    const edges = payload.available_edges;
+    const ctx = isPlainObject(payload.execution_context) ? payload.execution_context : {};
+    const vars = isPlainObject(ctx.vars) ? ctx.vars : {};
+    const system = isPlainObject(ctx.system) ? ctx.system : {};
+    const messages = (payload.whatsapp_context && Array.isArray(payload.whatsapp_context.messages))
+      ? payload.whatsapp_context.messages
+      : [];
+
+    if (edges.includes("timeout") && edges.includes("respondio")) {
+      return json({ next_edge: resolveResume(system, messages) });
+    }
+
+    if (edges.includes("terminar")) {
+      const stage = String(vars.stage || "").toLowerCase();
+      const isTerminal = FOLLOWUP_TERMINAL_MARKERS.some((marker) => stage.includes(marker));
+      return json({ next_edge: isTerminal ? "terminar" : "seguir" });
+    }
+
+    if (edges.includes("esperar")) {
+      return json({ next_edge: isQuietHourPeru() ? "esperar" : "enviar" });
+    }
+
+    return json({ next_edge: edges[0] || "" });
+  } catch (error) {
+    return json({ next_edge: "respondio", error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function resolveResume(system, messages) {
+  const reason = system && system.last_resume && system.last_resume.reason;
+  if (typeof reason === "string" && reason.length > 0) {
+    return reason === "timeout" ? "timeout" : "respondio";
+  }
+  const last = messages.length > 0 ? messages[messages.length - 1] : null;
+  if (last && last.direction === "inbound") return "respondio";
+  return "timeout";
+}
+
+function isQuietHourPeru() {
+  const limaHour = (new Date().getUTCHours() + 24 - 5) % 24;
+  return limaHour < 7; // 00:00-06:59 -> quiet
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 async function readJson(request) {

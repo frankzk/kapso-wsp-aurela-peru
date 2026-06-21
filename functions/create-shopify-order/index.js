@@ -27,10 +27,23 @@ async function handleRequest(request, env = globalThis) {
     const config = await getConfig(env);
     const orderInput = await buildOrderInput(config, input);
 
+    // Check final de stock por variante (cubre el caso en que el agente pasa variantId
+    // directo). Criterio: availableForSale. La orden se crea igual, pero se marca para
+    // validacion logistica si alguna variante esta agotada.
+    const outOfStockVariants = await checkVariantsStock(config, orderInput.lineItems.map((li) => li.variantId));
+    const stockToValidate = outOfStockVariants.length > 0;
+    if (stockToValidate) {
+      if (!orderInput.tags.includes("stock-por-validar")) orderInput.tags.push("stock-por-validar");
+      const detail = outOfStockVariants.map((v) => v.title || v.id).join("; ");
+      orderInput.note = `${orderInput.note}\nSTOCK POR VALIDAR (sin stock al crear): ${detail}`;
+    }
+
     if (input.dryRun || input.dry_run) {
       return json({
         ok: true,
         dryRun: true,
+        stockToValidate,
+        outOfStockVariants,
         orderPreview: {
           lineItems: orderInput.lineItems,
           phone: orderInput.phone,
@@ -61,13 +74,17 @@ async function handleRequest(request, env = globalThis) {
       conversionStatus: "confirmed",
       conversionType: "contraentrega",
       conversionTotal: Number(input.quote?.total ?? input.quote?.totalAmount ?? 0),
+      stockToValidate,
+      outOfStockVariants,
       order: {
         id: result.order.id,
         name: result.order.name,
         legacyResourceId: result.order.legacyResourceId,
         statusUrl: result.order.statusPageUrl,
       },
-      customerMessage: "Listo, tu pedido quedo registrado. Nuestro equipo coordinara el despacho por aqui.",
+      customerMessage: stockToValidate
+        ? "Listo, registre tu pedido. Queda sujeto a confirmacion de stock; nuestro equipo lo valida y te confirma por aqui."
+        : "Listo, tu pedido quedo registrado. Nuestro equipo coordinara el despacho por aqui.",
     });
   } catch (error) {
     return json({ ok: false, reason: "order_create_error", error: safeError(error) });
@@ -273,6 +290,37 @@ async function getProductByHandle(config, handle) {
     return data.productByHandle;
   } catch {
     return null;
+  }
+}
+
+async function checkVariantsStock(config, variantIds) {
+  const ids = [...new Set((variantIds || []).filter(Boolean))];
+  if (ids.length === 0) return [];
+
+  const query = `#graphql
+    query VariantsStock($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on ProductVariant {
+          id
+          title
+          availableForSale
+          product { title }
+        }
+      }
+    }`;
+
+  try {
+    const data = await shopifyGraphql(config, query, { ids });
+    const nodes = (data.nodes || []).filter(Boolean);
+    return nodes
+      .filter((variant) => variant.availableForSale === false)
+      .map((variant) => ({
+        id: variant.id,
+        title: [variant.product?.title, variant.title].filter(Boolean).join(" - "),
+      }));
+  } catch {
+    // Fail-open: si el check falla, no bloqueamos la creacion de la orden.
+    return [];
   }
 }
 

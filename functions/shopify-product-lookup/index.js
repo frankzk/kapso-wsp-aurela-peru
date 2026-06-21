@@ -1020,13 +1020,28 @@ function hasOption(product, names) {
 }
 
 function visibleOptions(product) {
+  // Solo valores de opciones (talla/color/...) que existen en al menos una variante
+  // con stock (availableForSale). Si una opcion no tiene valores en stock, se omite.
+  const inStockVariants = (product.variants || []).filter((variant) => variant.availableForSale);
   return (product.options || [])
     .filter((option) => {
       const name = normalizeSearchText(option.name);
       const values = option.values || [];
       return name !== "title" && !(values.length === 1 && normalizeSearchText(values[0]) === "default title");
     })
-    .map((option) => `${option.name}: ${(option.values || []).join(", ")}`);
+    .map((option) => {
+      const definedValues = option.values || [];
+      const availableSet = new Set(
+        inStockVariants
+          .map((variant) => (variant.selectedOptions || {})[option.name])
+          .filter(Boolean)
+          .map((value) => normalizeSearchText(value)),
+      );
+      const availableValues = definedValues.filter((value) => availableSet.has(normalizeSearchText(value)));
+      return { name: option.name, values: availableValues };
+    })
+    .filter((option) => option.values.length > 0)
+    .map((option) => `${option.name}: ${option.values.join(", ")}`);
 }
 
 function buildAmbiguousMessage(matches) {

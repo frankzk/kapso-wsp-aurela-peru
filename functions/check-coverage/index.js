@@ -90,6 +90,7 @@ async function handleRequest(request) {
   const cod = hasCashOnDelivery({ region, province, district });
 
   if (cod && !agencyRequested) {
+    const isLimaMetro = region === "lima" || province === "lima";
     return json({
       cashOnDelivery: true,
       shippingMode: "contraentrega",
@@ -98,6 +99,7 @@ async function handleRequest(request) {
       advanceAmount: 0,
       couriers: [],
       normalized: { district, province, region },
+      sameDayUrgent: isLimaMetro ? sameDayUrgentInfo() : null,
       message: "Zona con pago contraentrega. Puede pagar al recibir en efectivo o Yape.",
     });
   }
@@ -244,6 +246,19 @@ async function readJson(request) {
   } catch {
     return { message: text };
   }
+}
+
+// Ventana de entrega urgente HOY (solo Lima Metropolitana, contraentrega).
+// Peru = UTC-5. Corte exacto en horas enteras: 10:00 y 12:00.
+function sameDayUrgentInfo() {
+  const limaHour = (new Date().getUTCHours() + 24 - 5) % 24;
+  if (limaHour < 10) {
+    return { limaHour, window: "antes_10", canDeliverToday: true, deliveryWindowText: "hoy", alertTeam: false };
+  }
+  if (limaHour < 12) {
+    return { limaHour, window: "ventana_10_12", canDeliverToday: true, deliveryWindowText: "hoy entre las 3pm y 8pm", alertTeam: true };
+  }
+  return { limaHour, window: "cerrado", canDeliverToday: false, deliveryWindowText: null, alertTeam: false };
 }
 
 function hasCashOnDelivery({ region, province, district }) {

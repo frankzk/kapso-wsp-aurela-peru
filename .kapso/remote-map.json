@@ -51,21 +51,21 @@
     "shopify-product-lookup": {
       "files": {
         "functions/shopify-product-lookup/function.yaml": "9a7e173f5998f3002b03b8f6cf803c32b2152441cc535e82dad889bdf00335d0",
-        "functions/shopify-product-lookup/index.js": "40221ef7070ad0dbec05298de6d02133abc7b7c3e05636ab8c803853667de255"
+        "functions/shopify-product-lookup/index.js": "b03293160587e32dacac088096ea8f14ed95e7933030178f47d03c1edca69f67"
       },
       "id": "b95fa79b-ccea-4f74-b743-940792947e5e",
-      "lastDeployedAt": "2026-06-21T14:36:07-04:00",
-      "lockVersion": 36,
+      "lastDeployedAt": "2026-06-21T15:09:39-04:00",
+      "lockVersion": 38,
       "slug": "shopify-product-lookup",
       "status": "deployed",
-      "updatedAt": "2026-06-21T14:36:07-04:00"
+      "updatedAt": "2026-06-21T15:09:39-04:00"
     }
   },
   "version": 1,
   "workflows": {
     "aurela-sales-bot": {
       "files": {
-        "workflows/aurela-sales-bot/definition.json": "eecac71fb56e49a210b9abc4e7e2c971f9420618d4a9a410228727f9077d0e1a",
+        "workflows/aurela-sales-bot/definition.json": "372f396f5805657f7fc0ff8683dd3a38a865f9b4b90f46186b6b2d798dac2dd7",
         "workflows/aurela-sales-bot/workflow.yaml": "dd2461d9a2defc10e7b6c6f3e241420d914cc144d46146a79af5ffbbe09f9006"
       },
       "generatedSource": {
@@ -73,14 +73,14 @@
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 57,
+      "lockVersion": 58,
       "slug": "aurela-sales-bot",
       "sourceFile": {
-        "hash": "5b6680f2e654a66562e95bd1e13253e51267c8f434393d26686983d9d931d07c",
+        "hash": "032da7189a45541804f65b15826a7847f7ae9af9a54651237044f32b9f367c46",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "status": "active",
-      "updatedAt": "2026-06-21T14:36:17-04:00"
+      "updatedAt": "2026-06-21T15:09:44-04:00"
     }
   }
 }

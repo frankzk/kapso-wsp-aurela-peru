@@ -289,12 +289,14 @@ async function handleRequest(request, env = globalThis) {
     }
 
     const normalizedProduct = normalizeAnyProduct(product, config.publicShopDomain);
+    const outOfStock = isProductOutOfStock(normalizedProduct);
     return json({
       found: true,
       source: normalizedProduct.__source || "shopify",
       product: normalizedProduct,
+      outOfStock,
       customerMessage: buildProductFoundMessage(normalizedProduct),
-      nextAction: "ask_quantity",
+      nextAction: outOfStock ? "offer_alternative" : "ask_quantity",
     });
   } catch (error) {
     return json({
@@ -958,7 +960,20 @@ function normalizeAnyProduct(product) {
   return normalizeProduct(product);
 }
 
+function isProductOutOfStock(product) {
+  return (product.variants || []).filter((variant) => variant.availableForSale).length === 0;
+}
+
 function buildProductFoundMessage(product) {
+  // Producto completamente agotado: avisar y ofrecer alternativa (sin precio/promos).
+  if (isProductOutOfStock(product)) {
+    return [
+      `Uy, *${product.title}* esta agotado por ahora 😔`,
+      "",
+      "¿Te muestro una opcion parecida o prefieres que te avise cuando vuelva a entrar?",
+    ].join("\n");
+  }
+
   const price = product.priceRange?.min;
   const maxPrice = product.priceRange?.max;
   const priceText = Number.isFinite(price) && Number.isFinite(maxPrice) && price !== maxPrice
@@ -966,8 +981,7 @@ function buildProductFoundMessage(product) {
     : Number.isFinite(price)
       ? `S/ ${formatMoney(price)}`
       : "precio por confirmar";
-  const availableVariants = (product.variants || []).filter((variant) => variant.availableForSale);
-  const stockLine = availableVariants.length > 0 ? "" : "\nAparece sin stock disponible en la tienda, pero puedo pasarte con una asesora para revisarlo.";
+  const stockLine = "";
   const options = visibleOptions(product);
   const optionsLine = options.length ? `\nOpciones disponibles: ${options.join("; ")}` : "";
   const labels = productUnitLabels(product);

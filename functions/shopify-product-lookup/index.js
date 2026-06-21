@@ -279,7 +279,7 @@ async function handleRequest(request, env = globalThis) {
             matches: [],
             message: buildCategoryOutOfStockMessage(catalogSearch.category),
             customerMessage: buildCategoryOutOfStockMessage(catalogSearch.category),
-            nextAction: "notify_or_advisor",
+            nextAction: "offer_advisor",
           });
         }
         return json({
@@ -318,7 +318,7 @@ async function handleRequest(request, env = globalThis) {
         outOfStock: true,
         alternatives,
         customerMessage: buildOutOfStockMessage(normalizedProduct, alternatives),
-        nextAction: alternatives.length > 0 ? "offer_alternative" : "notify_or_advisor",
+        nextAction: alternatives.length > 0 ? "offer_alternative" : "offer_advisor",
       });
     }
 
@@ -1018,12 +1018,12 @@ function isProductOutOfStock(product) {
 
 function buildOutOfStockMessage(product, alternatives = []) {
   // Producto agotado: nunca ofrecer otro agotado. Solo ofrecer alternativas EN STOCK;
-  // si no hay, avisar cuando vuelva + ofrecer asesora (sin empujar otra categoria).
+  // si no hay, ofrecer pasar con asesora (NO prometer aviso de restock: no existe).
   if (alternatives.length === 0) {
     return [
       `Uy, *${product.title}* esta agotado por ahora 😔`,
       "",
-      "¿Quieres que te avise apenas vuelva a entrar, o prefieres que te pase con una asesora para ver otras opciones?",
+      "¿Quieres que te pase con una asesora para ver otras opciones?",
     ].join("\n");
   }
 
@@ -1032,7 +1032,7 @@ function buildOutOfStockMessage(product, alternatives = []) {
       `Uy, *${product.title}* esta agotado por ahora 😔`,
       "",
       `Lo que si tengo disponible y es parecido: *${alternatives[0].title}*${formatAlternativePrice(alternatives[0])}.`,
-      "¿Te muestro ese o prefieres que te avise cuando vuelva el que pediste?",
+      "¿Te muestro ese?",
     ].join("\n");
   }
 
@@ -1044,7 +1044,7 @@ function buildOutOfStockMessage(product, alternatives = []) {
     "",
     "Estas opciones parecidas si las tengo disponibles:",
     options,
-    "¿Cual te muestro? O si prefieres, te aviso cuando vuelva el que pediste.",
+    "¿Cual te muestro?",
   ].join("\n");
 }
 
@@ -1057,7 +1057,7 @@ function buildCategoryOutOfStockMessage(category) {
   return [
     `Uy, por ahora no tengo stock de ${title} 😔`,
     "",
-    "¿Quieres que te avise apenas vuelvan a entrar, o prefieres que te pase con una asesora para ver otras opciones?",
+    "¿Quieres que te pase con una asesora para ver otras opciones?",
   ].join("\n");
 }
 

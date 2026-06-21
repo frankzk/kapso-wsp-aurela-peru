@@ -15,7 +15,7 @@ workflow.addNode(START, {
 workflow.addTrigger({
   "active": true,
   "type": "inbound_message",
-  "phoneNumberId": "597907523413541"
+  "phoneNumberId": "1241790819006805"
 });
 
 workflow.addNode("sales-agent", {
@@ -625,7 +625,7 @@ workflow.addEdge(START, "sales-agent");
 // punto, vuelve al agente y la cadencia se reinicia.
 // ============================================================
 
-const PHONE_NUMBER_ID = "597907523413541";
+const PHONE_NUMBER_ID = "1241790819006805";
 const HOLD_SECONDS = 1800; // re-chequeo cada 30 min durante horario de silencio
 
 const FOLLOWUPS = [

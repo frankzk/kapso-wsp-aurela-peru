@@ -4,5 +4,5 @@ slug: aurela-sales-bot
 status: active
 triggers:
   - active: true
-    phoneNumberId: "597907523413541"
+    phoneNumberId: "1241790819006805"
     triggerType: inbound_message

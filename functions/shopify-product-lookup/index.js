@@ -267,14 +267,29 @@ async function handleRequest(request, env = globalThis) {
       }
 
       if (catalogSearch?.categoryMatches?.length) {
+        // Solo listar productos de la categoria que SI tienen stock. Si toda la categoria
+        // esta agotada, avisar + ofrecer asesora (no listar agotados).
+        const availableMatches = catalogSearch.categoryMatches.filter((match) => match.available);
+        if (availableMatches.length === 0) {
+          return json({
+            found: false,
+            reason: "category_out_of_stock",
+            category: catalogSearch.category,
+            input: queryText,
+            matches: [],
+            message: buildCategoryOutOfStockMessage(catalogSearch.category),
+            customerMessage: buildCategoryOutOfStockMessage(catalogSearch.category),
+            nextAction: "notify_or_advisor",
+          });
+        }
         return json({
           found: false,
           reason: "category_matches",
           category: catalogSearch.category,
           input: queryText,
-          matches: catalogSearch.categoryMatches,
-          message: buildCategoryMatchesMessage(catalogSearch.category, catalogSearch.categoryMatches),
-          customerMessage: buildCategoryMatchesMessage(catalogSearch.category, catalogSearch.categoryMatches),
+          matches: availableMatches,
+          message: buildCategoryMatchesMessage(catalogSearch.category, availableMatches),
+          customerMessage: buildCategoryMatchesMessage(catalogSearch.category, availableMatches),
           nextAction: "ask_product_choice",
         });
       }
@@ -290,13 +305,30 @@ async function handleRequest(request, env = globalThis) {
 
     const normalizedProduct = normalizeAnyProduct(product, config.publicShopDomain);
     const outOfStock = isProductOutOfStock(normalizedProduct);
+
+    if (outOfStock) {
+      // Nunca ofrecer un producto agotado como alternativa: buscar solo alternativas EN STOCK
+      // de la misma categoria. Si no hay ninguna, avisar + ofrecer asesora (sin empujar otra categoria).
+      const catalog = await loadPublicCatalog(config);
+      const alternatives = findInStockAlternatives(catalog, normalizedProduct);
+      return json({
+        found: true,
+        source: normalizedProduct.__source || "shopify",
+        product: normalizedProduct,
+        outOfStock: true,
+        alternatives,
+        customerMessage: buildOutOfStockMessage(normalizedProduct, alternatives),
+        nextAction: alternatives.length > 0 ? "offer_alternative" : "notify_or_advisor",
+      });
+    }
+
     return json({
       found: true,
       source: normalizedProduct.__source || "shopify",
       product: normalizedProduct,
-      outOfStock,
+      outOfStock: false,
       customerMessage: buildProductFoundMessage(normalizedProduct),
-      nextAction: outOfStock ? "offer_alternative" : "ask_quantity",
+      nextAction: "ask_quantity",
     });
   } catch (error) {
     return json({
@@ -686,7 +718,27 @@ function catalogMatchSummary(item) {
     title: product.title,
     url: product.url,
     price: product.priceRange?.min ?? null,
+    available: !isProductOutOfStock(product),
   };
+}
+
+function findInStockAlternatives(catalog, product, limit = 2) {
+  const targetCategories = new Set(product.categories || []);
+  if (targetCategories.size === 0 || !Array.isArray(catalog)) return [];
+
+  const currentKeys = new Set(handleKeys(product.handle || ""));
+
+  return catalog
+    .filter((candidate) => !isProductOutOfStock(candidate))
+    .filter((candidate) => !handleKeys(candidate.handle || "").some((key) => currentKeys.has(key)))
+    .map((candidate) => ({
+      product: candidate,
+      score: (candidate.categories || []).filter((category) => targetCategories.has(category)).length,
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(catalogMatchSummary);
 }
 
 async function getProductByHandle(config, handle) {
@@ -964,16 +1016,52 @@ function isProductOutOfStock(product) {
   return (product.variants || []).filter((variant) => variant.availableForSale).length === 0;
 }
 
-function buildProductFoundMessage(product) {
-  // Producto completamente agotado: avisar y ofrecer alternativa (sin precio/promos).
-  if (isProductOutOfStock(product)) {
+function buildOutOfStockMessage(product, alternatives = []) {
+  // Producto agotado: nunca ofrecer otro agotado. Solo ofrecer alternativas EN STOCK;
+  // si no hay, avisar cuando vuelva + ofrecer asesora (sin empujar otra categoria).
+  if (alternatives.length === 0) {
     return [
       `Uy, *${product.title}* esta agotado por ahora 😔`,
       "",
-      "¿Te muestro una opcion parecida o prefieres que te avise cuando vuelva a entrar?",
+      "¿Quieres que te avise apenas vuelva a entrar, o prefieres que te pase con una asesora para ver otras opciones?",
     ].join("\n");
   }
 
+  if (alternatives.length === 1) {
+    return [
+      `Uy, *${product.title}* esta agotado por ahora 😔`,
+      "",
+      `Lo que si tengo disponible y es parecido: *${alternatives[0].title}*${formatAlternativePrice(alternatives[0])}.`,
+      "¿Te muestro ese o prefieres que te avise cuando vuelva el que pediste?",
+    ].join("\n");
+  }
+
+  const options = alternatives
+    .map((alternative) => `• *${alternative.title}*${formatAlternativePrice(alternative)}`)
+    .join("\n");
+  return [
+    `Uy, *${product.title}* esta agotado por ahora 😔`,
+    "",
+    "Estas opciones parecidas si las tengo disponibles:",
+    options,
+    "¿Cual te muestro? O si prefieres, te aviso cuando vuelva el que pediste.",
+  ].join("\n");
+}
+
+function formatAlternativePrice(alternative) {
+  return Number.isFinite(Number(alternative?.price)) ? ` (S/ ${formatMoney(alternative.price)})` : "";
+}
+
+function buildCategoryOutOfStockMessage(category) {
+  const title = category?.label || "esos productos";
+  return [
+    `Uy, por ahora no tengo stock de ${title} 😔`,
+    "",
+    "¿Quieres que te avise apenas vuelvan a entrar, o prefieres que te pase con una asesora para ver otras opciones?",
+  ].join("\n");
+}
+
+function buildProductFoundMessage(product) {
   const price = product.priceRange?.min;
   const maxPrice = product.priceRange?.max;
   const priceText = Number.isFinite(price) && Number.isFinite(maxPrice) && price !== maxPrice

@@ -28,6 +28,7 @@ async function handleRequest(request, env = globalThis) {
   try {
     const payload = await readJson(request);
     const input = unwrapInput(payload);
+    enrichConversationContext(input, payload);
 
     if (input.coverage?.shippingMode === "agencia" || input.coverage?.shipping_mode === "agencia" || input.requiresLogisticsValidation || input.requires_logistics_validation) {
       return json({
@@ -62,6 +63,7 @@ async function handleRequest(request, env = globalThis) {
           phone: orderInput.phone,
           shippingAddress: orderInput.shippingAddress,
           tags: orderInput.tags,
+          customAttributes: orderInput.customAttributes || [],
           hasDiscount: Boolean(orderInput.discountCode),
           shippingLines: orderInput.shippingLines || [],
         },
@@ -178,6 +180,11 @@ async function buildOrderInput(config, input) {
     financialStatus: "PENDING",
     presentmentCurrency: "PEN",
   };
+
+  const customAttributes = buildCustomAttributes(input);
+  if (customAttributes.length) {
+    order.customAttributes = customAttributes;
+  }
 
   if (customer.email) {
     order.email = customer.email;
@@ -406,6 +413,21 @@ function buildAddress(customer) {
   };
 }
 
+// Atributos estructurados (note_attributes) para enlazar la orden con la
+// conversacion de Kapso de forma confiable (sin parsear la nota de texto).
+// Los consume el panel de analitica multi-tienda.
+function buildCustomAttributes(input) {
+  const attrs = [];
+  const conversationId = input.conversationId || input.conversation_id;
+  const phoneNumberId =
+    input.phoneNumberId || input.phone_number_id || input.whatsappPhoneNumberId || input.whatsapp_phone_number_id;
+
+  if (conversationId) attrs.push({ key: "kapso_conversation_id", value: String(conversationId) });
+  if (phoneNumberId) attrs.push({ key: "kapso_phone_number_id", value: String(phoneNumberId) });
+  attrs.push({ key: "source", value: "whatsapp-bot" });
+  return attrs;
+}
+
 function buildTags(input) {
   const tags = new Set(["kapso", "whatsapp", "aurela"]);
   if (
@@ -487,6 +509,26 @@ async function shopifyGraphql(config, query, variables) {
     throw new Error(JSON.stringify(payload.errors || payload));
   }
   return payload.data;
+}
+
+// Captura el contexto de conversacion de Kapso desde la raiz del payload (varias
+// formas posibles) y lo fusiona en `input` si el agente no lo paso. Habilita el
+// enlace orden <-> conversacion para el panel de analitica sin depender del prompt.
+function enrichConversationContext(input, payload) {
+  if (!input || typeof input !== "object") return;
+  const p = payload || {};
+
+  if (!input.conversationId && !input.conversation_id) {
+    const conversationId =
+      p.conversationId || p.conversation_id || p.conversation?.id || p.metadata?.conversation_id || p.metadata?.conversationId;
+    if (conversationId) input.conversationId = conversationId;
+  }
+
+  if (!input.phoneNumberId && !input.phone_number_id) {
+    const phoneNumberId =
+      p.phoneNumberId || p.phone_number_id || p.whatsapp?.phone_number_id || p.metadata?.phone_number_id;
+    if (phoneNumberId) input.phoneNumberId = phoneNumberId;
+  }
 }
 
 function unwrapInput(payload) {

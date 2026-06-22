@@ -592,6 +592,14 @@ Despues de crear orden:
             "stockPorValidar": {
               "type": "boolean",
               "description": "true si el cliente eligio una variante sin stock y se crea la orden sujeta a validacion logistica."
+            },
+            "conversationId": {
+              "type": "string",
+              "description": "ID de la conversacion de Kapso, para enlazar la orden con la conversacion en analitica. Pasalo si lo tienes disponible."
+            },
+            "phoneNumberId": {
+              "type": "string",
+              "description": "ID del numero de WhatsApp (phoneNumberId) de esta tienda, para analitica multi-tienda."
             }
           },
           "additionalProperties": true

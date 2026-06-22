@@ -401,6 +401,10 @@
               "input_schema": {
                 "additionalProperties": true,
                 "properties": {
+                  "conversationId": {
+                    "description": "ID de la conversacion de Kapso, para enlazar la orden con la conversacion en analitica. Pasalo si lo tienes disponible.",
+                    "type": "string"
+                  },
                   "coverage": {
                     "additionalProperties": true,
                     "type": "object"
@@ -458,6 +462,10 @@
                       "type": "object"
                     },
                     "type": "array"
+                  },
+                  "phoneNumberId": {
+                    "description": "ID del numero de WhatsApp (phoneNumberId) de esta tienda, para analitica multi-tienda.",
+                    "type": "string"
                   },
                   "quote": {
                     "additionalProperties": true,

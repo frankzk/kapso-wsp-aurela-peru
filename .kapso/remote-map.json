@@ -3,14 +3,14 @@
     "check-coverage": {
       "files": {
         "functions/check-coverage/function.yaml": "ac1fd7069d5ebd0442d0bae413e8d6ec43eafed28c57cd19bb2f8cc08e3e416b",
-        "functions/check-coverage/index.js": "c30b827a9dce37f45717d496192d89be1c4076cb95f4160a0494606771a92e71"
+        "functions/check-coverage/index.js": "053acc98497e41cc2b6a8687ac1f5f9a30e2ca48f90324957358f948b56a46ca"
       },
       "id": "f9ddb618-7f39-4ee3-af23-4d9733ba5d55",
-      "lastDeployedAt": "2026-06-21T13:03:43-04:00",
-      "lockVersion": 30,
+      "lastDeployedAt": "2026-06-23T00:11:40-04:00",
+      "lockVersion": 32,
       "slug": "check-coverage",
       "status": "deployed",
-      "updatedAt": "2026-06-21T13:03:43-04:00"
+      "updatedAt": "2026-06-23T00:11:40-04:00"
     },
     "create-shopify-order": {
       "files": {
@@ -85,7 +85,7 @@
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 114,
+      "lockVersion": 117,
       "slug": "aurela-sales-bot",
       "sourceFile": {
         "hash": "55a1e10fd3258b6006b161bc8e99337aa7d498cd7eef99e28dcc720c8641be0c",

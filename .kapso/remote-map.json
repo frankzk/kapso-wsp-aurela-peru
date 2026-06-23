@@ -24,6 +24,18 @@
       "status": "deployed",
       "updatedAt": "2026-06-21T21:22:04-04:00"
     },
+    "notify-team": {
+      "files": {
+        "functions/notify-team/function.yaml": "44aae76e429b5bc3b31b46e1a582322187b291554023c63075563480dd135b37",
+        "functions/notify-team/index.js": "e1bba9e56fb4933ec91917e057bff7208f41c201ab4db79e75b039a494866161"
+      },
+      "id": "fc7a67ec-dc65-420f-8cf5-79a0be4b032b",
+      "lastDeployedAt": "2026-06-22T23:04:50-04:00",
+      "lockVersion": 1,
+      "slug": "notify-team",
+      "status": "deployed",
+      "updatedAt": "2026-06-22T23:04:50-04:00"
+    },
     "product-media-lookup": {
       "files": {
         "functions/product-media-lookup/function.yaml": "69f2f86bddc60d4c3370f2e3d59f0de2903c8d175079da359b656293e46150fb",
@@ -65,22 +77,22 @@
   "workflows": {
     "aurela-sales-bot": {
       "files": {
-        "workflows/aurela-sales-bot/definition.json": "28986686dcfc33b239a440594e9df76f06a256ab2b28fe1560087cad6a26161b",
+        "workflows/aurela-sales-bot/definition.json": "09c06100c9d25eb3ce58bbf55db843bdab6a3d6e0b62beade1ab52548b3a981c",
         "workflows/aurela-sales-bot/workflow.yaml": "68ca00c3ebaf5fc6c73bfed5f04bb21badd94f33ef24701b051bf08eaed98d0e"
       },
       "generatedSource": {
-        "hash": "497e228259da14aabe0339d32ea2c0dd584b334ee32cf2ae8c770448135620ed",
+        "hash": "00308779b38e59b400f4ca37a5e0d16841b1a2340c5592fae6789df58e497f2c",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 95,
+      "lockVersion": 114,
       "slug": "aurela-sales-bot",
       "sourceFile": {
-        "hash": "f029818fbb783cbb61564f35fe545f2655d991c84a9eb3fbed458258ddd57ae8",
+        "hash": "55a1e10fd3258b6006b161bc8e99337aa7d498cd7eef99e28dcc720c8641be0c",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "status": "active",
-      "updatedAt": "2026-06-22T16:50:25-04:00"
+      "updatedAt": "2026-06-22T23:05:18-04:00"
     }
   }
 }

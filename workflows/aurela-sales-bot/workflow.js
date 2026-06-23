@@ -232,7 +232,10 @@ Grupo GF SAC
 📱 930 555 309
 Cuando lo realices, envíame el voucher o captura para continuar con la confirmación ✅"
 - Flujo Shalom/Olva ESPERANDO voucher (el cliente aun no paga ni envia captura): NO derives a humano. Guarda stage="esperando_voucher" con un followup_hint que recuerde el adelanto/pago (ej: "quedamos en que enviabas el voucher del adelanto de S/30 por Shalom") y llama complete_task. El sistema le enviara recordatorios amables del voucher; derivar a humano aqui cortaria esos recordatorios.
-- Flujo Shalom/Olva con voucher RECIBIDO (el cliente envia captura o dice que ya pago): no digas que el pedido esta confirmado automaticamente. Responde que lo recibiste y derivalo a validacion logistica con handoff_to_human, incluyendo resumen interno: producto, total, courier, telefono, voucher/pago reportado, DNI si aplica, agencia Shalom si aplica o direccion Olva si aplica.
+- Flujo Shalom/Olva con voucher RECIBIDO (el cliente envia captura o dice que ya pago): no digas que el pedido esta confirmado automaticamente. Haz DOS cosas internas y luego responde al cliente:
+  1) Llama notify_team con el resumen (customerName, phone, product, total, courier, destination = agencia Shalom o direccion Olva, dni si aplica, paymentReported = voucher/adelanto reportado). notify_team es una ALERTA INTERNA al equipo por Telegram: el cliente NUNCA la ve. Si notify_team devuelve ok=false, NO se lo menciones al cliente; continua igual.
+  2) Llama handoff_to_human con el mismo resumen interno (producto, total, courier, telefono, voucher/pago reportado, DNI si aplica, agencia Shalom si aplica o direccion Olva si aplica) para pasar a validacion logistica.
+  Luego responde al cliente, corto: que recibiste el voucher y su pedido pasa a validacion logistica.
 
 Fotos y medios:
 - PROACTIVO en la presentacion: al presentar un producto concreto con precio, SIEMPRE envias 1-2 imagenes principales como Msg 2 (ver "Presentacion de producto (3 mensajes)"), aunque el cliente no las haya pedido. Si no hay imagen real, omites ese mensaje.
@@ -624,6 +627,58 @@ Despues de crear orden:
           "additionalProperties": true
         },
         "function_slug": "create-shopify-order"
+      },
+      {
+        "name": "notify_team",
+        "description": "Alerta interna al equipo por Telegram cuando un cliente envia el voucher/adelanto en flujo Shalom/Olva. NUNCA es visible para el cliente: es solo una notificacion al dueno. Llamala junto con handoff_to_human al recibir el voucher.",
+        "function_name": "Notify Team",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "customerName": {
+              "type": "string",
+              "description": "Nombre completo del cliente."
+            },
+            "phone": {
+              "type": "string",
+              "description": "Numero de WhatsApp del cliente."
+            },
+            "product": {
+              "type": "string",
+              "description": "Producto(s) y cantidad del pedido."
+            },
+            "total": {
+              "type": "string",
+              "description": "Monto total a pagar (en soles)."
+            },
+            "courier": {
+              "type": "string",
+              "description": "Courier elegido: Shalom u Olva."
+            },
+            "destination": {
+              "type": "string",
+              "description": "Agencia/oficina Shalom de destino, o direccion exacta si es Olva."
+            },
+            "dni": {
+              "type": "string",
+              "description": "DNI del titular que recogera (si aplica, Shalom)."
+            },
+            "paymentReported": {
+              "type": "string",
+              "description": "Pago/adelanto reportado por el cliente (ej. adelanto S/30 Yape, nro de operacion)."
+            },
+            "note": {
+              "type": "string",
+              "description": "Nota interna adicional para el equipo."
+            },
+            "conversationId": {
+              "type": "string",
+              "description": "ID de la conversacion de Kapso si esta disponible."
+            }
+          },
+          "additionalProperties": true
+        },
+        "function_slug": "notify-team"
       }
     ],
     "flow_agent_app_integration_tools": [],

@@ -20,6 +20,27 @@ const CASH_ON_DELIVERY = {
   piura: ["piura", "castilla", "catacaos", "26 de octubre", "sullana", "talara"],
 };
 
+// Los 43 distritos de Lima Metropolitana tienen contraentrega. El cliente
+// suele dar solo el distrito (ej. "San Juan de Lurigancho", "Breña") sin la
+// provincia/region, asi que reconocemos el distrito por nombre para no caer al
+// fallback de agencia. Nombres normalizados (sin acentos, minusculas).
+const LIMA_METRO_DISTRICTS = new Set([
+  // Lima Centro
+  "barranco", "brena", "cercado de lima", "jesus maria", "la victoria", "lima",
+  "lince", "magdalena del mar", "miraflores", "pueblo libre", "rimac",
+  "san borja", "san isidro", "san luis", "san miguel", "santiago de surco", "surco", "surquillo",
+  // Lima Norte
+  "ancon", "carabayllo", "comas", "independencia", "los olivos", "puente piedra",
+  "san martin de porres", "smp", "santa rosa",
+  // Lima Este
+  "ate", "ate vitarte", "vitarte", "chaclacayo", "cieneguilla", "el agustino",
+  "lurigancho-chosica", "lurigancho", "chosica", "san juan de lurigancho", "sjl", "santa anita",
+  // Lima Sur
+  "chorrillos", "lurin", "pachacamac", "pucusana", "punta hermosa", "punta negra",
+  "san bartolo", "san juan de miraflores", "sjm", "santa maria del mar",
+  "villa el salvador", "ves", "villa maria del triunfo", "vmt",
+]);
+
 const DISTRICT_LOCATION_HINTS = {
   trujillo: { province: "trujillo", region: "la libertad" },
   "el porvenir": { province: "trujillo", region: "la libertad" },
@@ -90,7 +111,7 @@ async function handleRequest(request) {
   const cod = hasCashOnDelivery({ region, province, district });
 
   if (cod && !agencyRequested) {
-    const isLimaMetro = region === "lima" || province === "lima";
+    const isLimaMetro = region === "lima" || province === "lima" || LIMA_METRO_DISTRICTS.has(district);
     return json({
       cashOnDelivery: true,
       shippingMode: "contraentrega",
@@ -266,6 +287,10 @@ function hasCashOnDelivery({ region, province, district }) {
 
   if (candidates.some((item) => item === "callao")) return true;
   if (candidates.some((item) => item === "lima")) return true;
+
+  // El cliente dio solo el distrito (sin provincia/region): si es un distrito de
+  // Lima Metropolitana, igual tiene contraentrega.
+  if (district && LIMA_METRO_DISTRICTS.has(district)) return true;
 
   for (const place of candidates) {
     const coveredDistricts = CASH_ON_DELIVERY[place];

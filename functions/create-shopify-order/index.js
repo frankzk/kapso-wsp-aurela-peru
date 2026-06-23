@@ -1,6 +1,10 @@
 const DEFAULT_SHOP_DOMAIN = "aurela-peru.myshopify.com";
 const DEFAULT_API_VERSION = "2026-04";
 const MAX_QUANTITY = 50; // tope de seguridad: evita ordenes accidentales de miles de unidades
+// Reglas de promo/envio (espejo de quote-order): el descuento 3x2/5x3 se calcula
+// aqui en el servidor desde los precios reales, sin depender de que el agente lo pase.
+const FREE_SHIPPING_THRESHOLD = 40;
+const SHIPPING_FEE_UNDER_THRESHOLD = 10;
 
 function clampQuantity(raw) {
   const n = Number.parseInt(raw, 10);
@@ -159,12 +163,22 @@ async function getKvConfig(env) {
 async function buildOrderInput(config, input) {
   const customer = input.customer || {};
   const quote = input.quote || {};
-  const discountTotal = Number(quote.discountTotal ?? quote.discount_total ?? 0);
-  const shippingFee = Number(quote.shippingFee ?? quote.shipping_fee ?? 0);
   const lineItems = await resolveLineItems(config, normalizeLineItems(input.lineItems || input.items || []));
 
   if (!lineItems.length) {
     throw new Error("Missing line items with valid Shopify variant IDs");
+  }
+
+  // Descuento de promo (3x2/5x3) y envio se calculan en el servidor desde los
+  // precios reales de las variantes, para que la orden SIEMPRE respete la promo
+  // aunque el agente olvide pasar quote.discountTotal. Si la consulta de precios
+  // falla, se cae al quote que envio el agente (comportamiento previo).
+  let discountTotal = Number(quote.discountTotal ?? quote.discount_total ?? 0);
+  let shippingFee = Number(quote.shippingFee ?? quote.shipping_fee ?? 0);
+  const computed = await computePricing(config, lineItems);
+  if (computed) {
+    discountTotal = computed.discountTotal;
+    shippingFee = computed.shippingFee;
   }
 
   const order = {
@@ -197,6 +211,7 @@ async function buildOrderInput(config, input) {
         amountSet: moneySet(discountTotal),
       },
     };
+    if (!order.tags.includes("promo-whatsapp")) order.tags.push("promo-whatsapp");
   }
 
   if (shippingFee > 0) {
@@ -341,6 +356,77 @@ async function checkVariantsStock(config, variantIds) {
   } catch {
     // Fail-open: si el check falla, no bloqueamos la creacion de la orden.
     return [];
+  }
+}
+
+// Calcula descuento de promo (3x2/5x3) y envio desde los precios reales de las
+// variantes. Devuelve null si no se pudo obtener el precio de todas (fallback al
+// quote del agente). La promo aplica por producto: variantes del mismo producto
+// cuentan juntas (mismas reglas que quote-order).
+async function computePricing(config, lineItems) {
+  const variantIds = lineItems.map((li) => normalizeVariantId(li.variantId)).filter(Boolean);
+  const pricing = await fetchVariantPricing(config, variantIds);
+  if (!pricing.size) return null;
+
+  const unitsByProduct = new Map();
+  for (const item of lineItems) {
+    const info = pricing.get(normalizeVariantId(item.variantId));
+    if (!info || !Number.isFinite(info.price)) return null; // sin precio confiable -> fallback
+    const list = unitsByProduct.get(info.productId) || [];
+    for (let i = 0; i < item.quantity; i += 1) list.push(info.price);
+    unitsByProduct.set(info.productId, list);
+  }
+
+  let subtotalBeforeDiscount = 0;
+  let discountTotal = 0;
+  for (const prices of unitsByProduct.values()) {
+    subtotalBeforeDiscount += prices.reduce((sum, price) => sum + price, 0);
+    const freeUnits = countFreeUnits(prices.length);
+    if (freeUnits > 0) {
+      const cheapestFirst = [...prices].sort((a, b) => a - b);
+      discountTotal += cheapestFirst.slice(0, freeUnits).reduce((sum, price) => sum + price, 0);
+    }
+  }
+
+  discountTotal = money(discountTotal);
+  const subtotalAfterDiscount = money(money(subtotalBeforeDiscount) - discountTotal);
+  const shippingFee = subtotalAfterDiscount > FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE_UNDER_THRESHOLD;
+  return { discountTotal, shippingFee, subtotalAfterDiscount };
+}
+
+// Unidades gratis por promo: 5x3 (2 gratis por cada 5) + 3x2 (1 gratis si el resto >=3).
+function countFreeUnits(quantity) {
+  const fivePacks = Math.floor(quantity / 5);
+  const remainder = quantity % 5;
+  const threePackFreeUnits = remainder >= 3 ? 1 : 0;
+  return fivePacks * 2 + threePackFreeUnits;
+}
+
+async function fetchVariantPricing(config, variantIds) {
+  const ids = [...new Set((variantIds || []).filter(Boolean))];
+  if (ids.length === 0) return new Map();
+
+  const query = `#graphql
+    query VariantPricing($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on ProductVariant {
+          id
+          price
+          product { id }
+        }
+      }
+    }`;
+
+  try {
+    const data = await shopifyGraphql(config, query, { ids });
+    const map = new Map();
+    for (const node of (data.nodes || []).filter(Boolean)) {
+      map.set(node.id, { price: Number(node.price), productId: node.product?.id || node.id });
+    }
+    return map;
+  } catch {
+    // Fail-soft: si falla la consulta de precios, devolvemos vacio y se usa el quote del agente.
+    return new Map();
   }
 }
 
@@ -620,8 +706,12 @@ function normalizePhone(value) {
   return `+${digits}`;
 }
 
+function money(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
 function formatMoney(value) {
-  return (Math.round((Number(value) + Number.EPSILON) * 100) / 100).toFixed(2);
+  return money(value).toFixed(2);
 }
 
 function json(body, status = 200) {
@@ -635,4 +725,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaCreateShopifyOrder = { buildOrderInput, handleRequest, handler };
+globalThis.__aurelaCreateShopifyOrder = { buildOrderInput, computePricing, countFreeUnits, handleRequest, handler };

@@ -727,6 +727,55 @@ const FOLLOWUP_MESSAGES = {
   5: "Ultimo recordatorio 🙏 {{vars.followup_hint}} Si prefieres lo vemos en otro momento, aqui estare.",
 };
 
+// Seguimientos con nota de voz (2do y 3ro). El audio se envia DESPUES del texto
+// corto, via un mini-nodo agente que llama send_media (unico camino soportado:
+// no hay nodo determinista de media en el SDK de @kapso/workflows). Se activa
+// solo cuando la URL publica del audio esta cargada; si esta vacia, ese escalon
+// queda como texto normal (FOLLOWUP_MESSAGES) y el ladder se comporta como hoy.
+const AUDIO_STEPS = new Set([2, 3]);
+
+// URLs publicas HTTPS de las notas de voz (Shopify Files / CDN). Vacias hasta
+// que el dueno entregue las grabaciones; rellenar para activar el audio.
+const FOLLOWUP_AUDIO = {
+  2: "",
+  3: "",
+};
+
+// Texto corto que acompana la nota de voz cuando el escalon usa audio.
+const FOLLOWUP_AUDIO_TEXT = {
+  2: "Te dejo una nota de voz 🎤 {{vars.followup_hint}}",
+  3: "Te grabe algo rapidito 🎙️ {{vars.followup_hint}}",
+};
+
+// Mini-agente que envia UNA nota de voz por send_media y termina. Mantiene la
+// misma estructura raw que el sales-agent (workflow.js: "type":"raw" + nodeType).
+function audioAgentConfig(audioUrl) {
+  return {
+    config: {
+      system_prompt:
+        "Eres un paso automatico de envio. Tu UNICA tarea: llamar la herramienta send_media exactamente UNA vez para enviar una nota de voz al cliente, " +
+        `usando esta URL como archivo de audio: ${audioUrl} (tipo de media: audio). ` +
+        "No escribas ningun texto al cliente, no agregues caption, no llames otras herramientas. " +
+        "Despues de enviar el audio, llama complete_task de inmediato.",
+      provider_model_id: "de8992a1-6f21-4a30-9d37-f8645f66e14e",
+      provider_model_name: "gpt-4.1",
+      temperature: 0,
+      max_iterations: 3,
+      max_tokens: 512,
+      message_delivery_mode: "auto_send_assistant_text",
+      enabled_default_tools: ["send_media", "complete_task"],
+      flow_agent_function_tools: [],
+      flow_agent_app_integration_tools: [],
+      flow_agent_webhooks: [],
+      flow_agent_knowledge_bases: [],
+      flow_agent_mcp_servers: [],
+      flow_agent_resources: [],
+    },
+    nodeType: "agent",
+    type: "raw",
+  };
+}
+
 // Tras completar el agente: seguir con la escalera o terminar (estado terminal).
 workflow.addNode("fu-terminal", {
   type: "decide",
@@ -797,13 +846,27 @@ for (const { step, wait } of FOLLOWUPS) {
   }, { position: { x: baseX + 150, y: 380 }, displayName: `Espera horario ${step}` });
   workflow.addEdge(h, wr);
 
-  // Envio del seguimiento.
+  // ¿Este escalon manda nota de voz? Solo si esta en AUDIO_STEPS y la URL existe.
+  const audioUrl = AUDIO_STEPS.has(step) ? (FOLLOWUP_AUDIO[step] || "") : "";
+  const useAudio = Boolean(audioUrl);
+  const next = step < 5 ? `fu-w${step + 1}` : "fu-lost";
+
+  // Envio del seguimiento (texto). Con audio usa el texto corto que lo acompana.
   workflow.addNode(s, {
     type: "send_text",
-    message: FOLLOWUP_MESSAGES[step],
+    message: useAudio ? FOLLOWUP_AUDIO_TEXT[step] : FOLLOWUP_MESSAGES[step],
     phoneNumberId: PHONE_NUMBER_ID,
   }, { position: { x: baseX, y: 520 }, displayName: `Seguimiento ${step}` });
-  workflow.addEdge(s, step < 5 ? `fu-w${step + 1}` : "fu-lost");
+
+  if (useAudio) {
+    // texto corto -> nota de voz (mini-agente send_media) -> siguiente escalon.
+    const a = `fu-a${step}`;
+    workflow.addNode(a, audioAgentConfig(audioUrl), { position: { x: baseX, y: 660 }, displayName: `Audio ${step}` });
+    workflow.addEdge(s, a);
+    workflow.addEdge(a, next);
+  } else {
+    workflow.addEdge(s, next);
+  }
 }
 
 // Sin respuesta tras el ultimo seguimiento: lead perdido y fin.

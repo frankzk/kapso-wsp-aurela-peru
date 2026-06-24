@@ -15,14 +15,14 @@
     "create-shopify-order": {
       "files": {
         "functions/create-shopify-order/function.yaml": "89e333eba8b792d43f536c08612d975cfbd4e9d26318f2bfc289a334a8917500",
-        "functions/create-shopify-order/index.js": "f1cd87e2133a56261e9e01f41ee48ce85a9d17f52fe6f64318f8a066683b6f5e"
+        "functions/create-shopify-order/index.js": "f07fe264fd867ff5435fceb26779d02ffba50fda8a39cdd7d79296c53b86ea77"
       },
       "id": "7b63c9c1-4405-4e86-876a-f7fccf7daa12",
-      "lastDeployedAt": "2026-06-21T21:22:04-04:00",
-      "lockVersion": 39,
+      "lastDeployedAt": "2026-06-24T00:20:23-04:00",
+      "lockVersion": 41,
       "slug": "create-shopify-order",
       "status": "deployed",
-      "updatedAt": "2026-06-21T21:22:04-04:00"
+      "updatedAt": "2026-06-24T00:20:23-04:00"
     },
     "notify-team": {
       "files": {
@@ -77,15 +77,15 @@
   "workflows": {
     "aurela-sales-bot": {
       "files": {
-        "workflows/aurela-sales-bot/definition.json": "e74a1613bef2eaafe702e746f68e186bf912edc20df34f768ad60e0403bc42c0",
+        "workflows/aurela-sales-bot/definition.json": "05686cbdb06dba36c8ff6c29cb73e11fef18e101962afa624e676b3a815f50db",
         "workflows/aurela-sales-bot/workflow.yaml": "68ca00c3ebaf5fc6c73bfed5f04bb21badd94f33ef24701b051bf08eaed98d0e"
       },
       "generatedSource": {
-        "hash": "00308779b38e59b400f4ca37a5e0d16841b1a2340c5592fae6789df58e497f2c",
+        "hash": "72b423f53fdc1c75c09bef330a50a875f396e07fd33d831d48cc25523f6bfcc0",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 143,
+      "lockVersion": 161,
       "slug": "aurela-sales-bot",
       "sourceFile": {
         "hash": "4d2b455d7df6d419796f43526f906196e9723312227738701359da61f6eed50c",

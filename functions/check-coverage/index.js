@@ -111,7 +111,7 @@ async function handleRequest(request) {
   const cod = hasCashOnDelivery({ region, province, district });
 
   if (cod && !agencyRequested) {
-    const isLimaMetro = region === "lima" || province === "lima" || LIMA_METRO_DISTRICTS.has(district);
+    const isLimaMetro = region === "lima" || province === "lima" || isLimaMetroDistrict(district);
     return json({
       cashOnDelivery: true,
       shippingMode: "contraentrega",
@@ -290,7 +290,7 @@ function hasCashOnDelivery({ region, province, district }) {
 
   // El cliente dio solo el distrito (sin provincia/region): si es un distrito de
   // Lima Metropolitana, igual tiene contraentrega.
-  if (district && LIMA_METRO_DISTRICTS.has(district)) return true;
+  if (district && isLimaMetroDistrict(district)) return true;
 
   for (const place of candidates) {
     const coveredDistricts = CASH_ON_DELIVERY[place];
@@ -300,6 +300,46 @@ function hasCashOnDelivery({ region, province, district }) {
   }
 
   return false;
+}
+
+// Reconoce un distrito de Lima Metropolitana tolerando errores de tipeo del
+// cliente (ej. "San juam de lurigancho" -> "san juan de lurigancho"). Usa
+// distancia de edicion solo en nombres largos para evitar falsos positivos en
+// abreviaturas cortas ("sjl", "ate", "ves", "vmt", "sjm").
+function isLimaMetroDistrict(district) {
+  if (!district) return false;
+  if (LIMA_METRO_DISTRICTS.has(district)) return true;
+
+  for (const known of LIMA_METRO_DISTRICTS) {
+    if (known.length < 5) continue; // no fuzzy en abreviaturas (sjl, ate, ves, vmt, sjm)
+    // Exigir misma inicial: los typos rara vez cambian la primera letra, pero
+    // distritos distintos de otras regiones si (ej. "lomas"/"tomas" vs "comas").
+    if (known[0] !== district[0]) continue;
+    const maxDist = known.length >= 10 ? 2 : 1;
+    if (Math.abs(known.length - district.length) > maxDist) continue;
+    if (levenshtein(district, known) <= maxDist) return true;
+  }
+  return false;
+}
+
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  let prev = new Array(n + 1);
+  for (let j = 0; j <= n; j += 1) prev[j] = j;
+
+  for (let i = 1; i <= m; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[n];
 }
 
 function normalizePlace(value) {
@@ -384,5 +424,7 @@ globalThis.__aurelaCheckCoverage = {
   handleRequest,
   handler,
   hasCashOnDelivery,
+  isLimaMetroDistrict,
+  levenshtein,
   normalizePlace,
 };

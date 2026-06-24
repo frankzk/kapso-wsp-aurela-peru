@@ -1,16 +1,28 @@
 {
   "functions": {
+    "campaign-report": {
+      "files": {
+        "functions/campaign-report/function.yaml": "afc604a5c7f8fabfb88f505d1d776bd9141dd73945c9aac101418cc4d3e2dadb",
+        "functions/campaign-report/index.js": "80bbf7375521065d6ad4209b85a8b185d562911f1c9d86320d0ddbcab87b4c86"
+      },
+      "id": "b9b96196-14f5-4ba0-8bd8-d48b0334d292",
+      "lastDeployedAt": "2026-06-24T11:43:07-04:00",
+      "lockVersion": 11,
+      "slug": "campaign-report",
+      "status": "deployed",
+      "updatedAt": "2026-06-24T11:43:07-04:00"
+    },
     "check-coverage": {
       "files": {
         "functions/check-coverage/function.yaml": "ac1fd7069d5ebd0442d0bae413e8d6ec43eafed28c57cd19bb2f8cc08e3e416b",
-        "functions/check-coverage/index.js": "053acc98497e41cc2b6a8687ac1f5f9a30e2ca48f90324957358f948b56a46ca"
+        "functions/check-coverage/index.js": "82356fad161ac3289c7a7e867f293f652044173cce9274e9aa21992158304654"
       },
       "id": "f9ddb618-7f39-4ee3-af23-4d9733ba5d55",
-      "lastDeployedAt": "2026-06-23T00:11:40-04:00",
-      "lockVersion": 32,
+      "lastDeployedAt": "2026-06-24T11:18:08-04:00",
+      "lockVersion": 34,
       "slug": "check-coverage",
       "status": "deployed",
-      "updatedAt": "2026-06-23T00:11:40-04:00"
+      "updatedAt": "2026-06-24T11:18:08-04:00"
     },
     "create-shopify-order": {
       "files": {
@@ -18,11 +30,11 @@
         "functions/create-shopify-order/index.js": "30357e5a345fed3e612d8f084cdee58fc6e1ef8a32428defc0199f55abe8aedb"
       },
       "id": "7b63c9c1-4405-4e86-876a-f7fccf7daa12",
-      "lastDeployedAt": "2026-06-24T01:20:17-04:00",
-      "lockVersion": 43,
+      "lastDeployedAt": "2026-06-24T11:26:19-04:00",
+      "lockVersion": 49,
       "slug": "create-shopify-order",
       "status": "deployed",
-      "updatedAt": "2026-06-24T01:20:17-04:00"
+      "updatedAt": "2026-06-24T11:26:19-04:00"
     },
     "notify-team": {
       "files": {

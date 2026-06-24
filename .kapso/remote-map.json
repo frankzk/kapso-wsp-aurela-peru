@@ -89,22 +89,22 @@
   "workflows": {
     "aurela-sales-bot": {
       "files": {
-        "workflows/aurela-sales-bot/definition.json": "b0c940062e7edc3134dbf5d748fafd23bd308ab6a7410b941592f310150cdea2",
+        "workflows/aurela-sales-bot/definition.json": "b44989da339ca9016b41ca6b1e22d4e52f30c8a15a8bab01416598cb561ef8b9",
         "workflows/aurela-sales-bot/workflow.yaml": "68ca00c3ebaf5fc6c73bfed5f04bb21badd94f33ef24701b051bf08eaed98d0e"
       },
       "generatedSource": {
-        "hash": "72b423f53fdc1c75c09bef330a50a875f396e07fd33d831d48cc25523f6bfcc0",
+        "hash": "e20c1d901a96430e2abf2ae15ab4b34817d981cd300a0306b96447c358ee9cd6",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 209,
+      "lockVersion": 214,
       "slug": "aurela-sales-bot",
       "sourceFile": {
-        "hash": "a8c890ba6aa6450984ffe8c3dfa4edbad57e342b8a4b734e2dda3850328340dc",
+        "hash": "e70e77ba72c55eb1bd0c225d23db89d2935a4fd859ad405b29d522543ee41545",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "status": "active",
-      "updatedAt": "2026-06-24T17:20:34-04:00"
+      "updatedAt": "2026-06-24T18:15:26-04:00"
     }
   }
 }

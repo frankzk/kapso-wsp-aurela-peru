@@ -14,15 +14,15 @@
     },
     "create-shopify-order": {
       "files": {
-        "functions/create-shopify-order/function.yaml": "89e333eba8b792d43f536c08612d975cfbd4e9d26318f2bfc289a334a8917500",
-        "functions/create-shopify-order/index.js": "f07fe264fd867ff5435fceb26779d02ffba50fda8a39cdd7d79296c53b86ea77"
+        "functions/create-shopify-order/function.yaml": "6c05de9e95183c4a287509e7756eeac91ee2907d43d580fa3647abe73c5f2c72",
+        "functions/create-shopify-order/index.js": "30357e5a345fed3e612d8f084cdee58fc6e1ef8a32428defc0199f55abe8aedb"
       },
       "id": "7b63c9c1-4405-4e86-876a-f7fccf7daa12",
-      "lastDeployedAt": "2026-06-24T00:20:23-04:00",
-      "lockVersion": 41,
+      "lastDeployedAt": "2026-06-24T01:20:17-04:00",
+      "lockVersion": 43,
       "slug": "create-shopify-order",
       "status": "deployed",
-      "updatedAt": "2026-06-24T00:20:23-04:00"
+      "updatedAt": "2026-06-24T01:20:17-04:00"
     },
     "notify-team": {
       "files": {

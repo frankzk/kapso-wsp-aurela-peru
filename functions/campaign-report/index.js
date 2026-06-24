@@ -31,8 +31,7 @@ if (typeof addEventListener === "function") {
 }
 
 async function handleRequest(request, env = globalThis) {
-  const url = new URL(request.url);
-  const params = Object.fromEntries(url.searchParams.entries());
+  const params = await readParams(request);
   const wantsJson = params.format === "json" || /application\/json/i.test(request.headers.get("accept") || "");
   const config = getConfig(env);
 
@@ -58,6 +57,27 @@ async function handleRequest(request, env = globalThis) {
     const payload = { error: "report_error", message: safeError(error) };
     return wantsJson ? json(payload, 500) : html(renderError(payload), 500);
   }
+}
+
+// El invoke de Kapso (POST) no reenvia el query string al worker; los parametros
+// llegan en el body JSON. Leemos de body + query (query sirve para pruebas locales
+// o GET directo) y desanidamos `input` por si la llamada viene como tool de agente.
+async function readParams(request) {
+  const url = new URL(request.url);
+  const query = Object.fromEntries(url.searchParams.entries());
+  let body = {};
+  if (request.method !== "GET") {
+    try {
+      const parsed = await request.json();
+      if (parsed && typeof parsed === "object") {
+        body = parsed.input && typeof parsed.input === "object" ? { ...parsed, ...parsed.input } : parsed;
+      }
+    } catch {
+      // sin body o no-JSON: ignorar
+    }
+  }
+  const headerKey = request.headers.get("x-dashboard-key");
+  return { ...query, ...body, ...(headerKey ? { key: headerKey } : {}) };
 }
 
 function getConfig(env = globalThis) {

@@ -51,6 +51,12 @@ async function handleRequest(request, env = globalThis) {
     const meta = await fetchMetaInsights(config, range);
     const report = buildReport({ sales, meta, range, config });
 
+    // Modo notificacion: empuja un resumen al Telegram del equipo (para el job diario).
+    if (params.notify === "telegram") {
+      const result = await sendTelegramSummary(config, report);
+      return json({ ok: result.ok, notify: "telegram", ...result, range: report.range });
+    }
+
     if (wantsJson) return json(report);
     return html(renderDashboard(report).replace(/__KEY__/g, encodeURIComponent(provided)));
   } catch (error) {
@@ -90,6 +96,8 @@ function getConfig(env = globalThis) {
     metaAdAccountId: normalizeAdAccountId(g("META_AD_ACCOUNT_ID", "mETAADACCOUNTID")),
     metaApiVersion: g("META_API_VERSION", "mETAAPIVERSION") || DEFAULT_META_API_VERSION,
     dashboardKey: g("DASHBOARD_ACCESS_KEY", "dASHBOARDACCESSKEY"),
+    telegramToken: g("TELEGRAM_BOT_TOKEN", "tELEGRAMBOTTOKEN"),
+    telegramChatId: g("TELEGRAM_CHAT_ID", "tELEGRAMCHATID"),
   };
 }
 
@@ -105,6 +113,16 @@ function normalizeAdAccountId(value) {
 
 function resolveRange(params) {
   const nowLima = new Date(Date.now() - LIMA_OFFSET_MS);
+
+  // Atajos de periodo (utiles para el resumen diario): "yesterday" reporta el dia
+  // de ayer completo en hora Lima; "today" el dia en curso.
+  if (params.period === "yesterday" || params.period === "today") {
+    const ref = new Date(nowLima);
+    if (params.period === "yesterday") ref.setUTCDate(ref.getUTCDate() - 1);
+    const day = toDateStr(ref);
+    return { since: day, until: day, days: 1, sinceIso: `${day}T00:00:00Z`, untilIso: `${day}T23:59:59Z` };
+  }
+
   const until = isValidDate(params.until) ? params.until : toDateStr(nowLima);
   let since;
   let days = clampInt(params.days, 1, 365, DEFAULT_DAYS);
@@ -544,8 +562,68 @@ function html(markup, status = 200) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Resumen a Telegram (job diario)
+// ---------------------------------------------------------------------------
+
+async function sendTelegramSummary(config, report) {
+  if (!config.telegramToken || !config.telegramChatId) {
+    return { ok: false, reason: "missing_telegram_config" };
+  }
+  const text = buildTelegramSummary(report);
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${config.telegramToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: config.telegramChatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+    if (!res.ok) {
+      let description = "";
+      try { const d = await res.json(); description = d && d.description ? String(d.description) : ""; } catch {}
+      return { ok: false, reason: "telegram_error", status: res.status, description };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: "request_failed", error: safeError(err) };
+  }
+}
+
+function buildTelegramSummary(report) {
+  const cur = report.currency;
+  const t = report.totals;
+  const L = [];
+  L.push("📊 <b>Ventas por campaña · Aurela</b>");
+  L.push(`🗓️ ${escapeHtml(report.range.since)} → ${escapeHtml(report.range.until)}`);
+  L.push("");
+  L.push(`💰 <b>Ingresos totales:</b> ${money(t.totalRevenue, cur)} (${t.ordersScanned} pedidos)`);
+  L.push(`🎯 <b>Atribuido a anuncios:</b> ${money(t.attributedRevenue, cur)} (${t.attributedOrders} ped · ${Math.round(t.attributionRate * 100)}%)`);
+  if (report.metaConfigured) {
+    let line = `📣 <b>Gasto:</b> ${money(t.totalSpend, cur)}`;
+    if (t.overallRoas != null) line += ` · <b>ROAS:</b> ${t.overallRoas}x`;
+    if (t.overallCpa != null) line += ` · <b>CPA:</b> ${money(t.overallCpa, cur)}`;
+    L.push(line);
+  }
+  const top = report.campaigns.slice(0, 5);
+  if (top.length) {
+    L.push("");
+    L.push("<b>Top campañas:</b>");
+    top.forEach((c, i) => {
+      const roas = c.roas != null ? ` · ROAS ${c.roas}x` : "";
+      L.push(`${i + 1}. ${escapeHtml(c.campaignName)} — ${c.orders} ped · ${money(c.revenue, cur)}${roas}`);
+    });
+  } else if (t.attributedOrders === 0) {
+    L.push("");
+    L.push("ℹ️ Aún sin ventas atribuidas a anuncios en este rango.");
+  }
+  if (!report.metaConfigured) {
+    L.push("");
+    L.push("<i>Conecta Meta Ads para ver gasto, CPA y ROAS.</i>");
+  }
+  return L.join("\n");
+}
+
 function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaCampaignReport = { buildReport, fetchOrderAggregates, fetchMetaInsights, handleRequest, handler, resolveRange };
+globalThis.__aurelaCampaignReport = { buildReport, buildTelegramSummary, fetchOrderAggregates, fetchMetaInsights, handleRequest, handler, resolveRange };

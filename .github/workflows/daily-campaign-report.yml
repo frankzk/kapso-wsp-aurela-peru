@@ -1,0 +1,35 @@
+name: Resumen diario de ventas por campaña (Telegram)
+
+# Kapso no tiene triggers programados, así que el resumen diario se dispara desde
+# aquí. Llama al endpoint público de la función campaign-report en modo
+# notify=telegram, que arma el resumen del día anterior y lo postea al Telegram
+# del equipo (mismo chat que notify-team).
+#
+# Requisitos (una sola vez):
+#   1) Este archivo debe estar en la rama por defecto del repo para que el cron corra.
+#   2) Crear el secret de repositorio CAMPAIGN_DASHBOARD_KEY con la clave de acceso
+#      del dashboard (Settings → Secrets and variables → Actions → New repository secret).
+
+on:
+  schedule:
+    - cron: "0 13 * * *" # 13:00 UTC = 08:00 America/Lima (UTC-5, sin horario de verano)
+  workflow_dispatch: {} # permite ejecutarlo manualmente desde la pestaña Actions
+
+jobs:
+  enviar-resumen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enviar resumen a Telegram
+        env:
+          DASHBOARD_KEY: ${{ secrets.CAMPAIGN_DASHBOARD_KEY }}
+          FUNCTION_URL: "https://api.kapso.ai/platform/v1/functions/b9b96196-14f5-4ba0-8bd8-d48b0334d292/invoke"
+        run: |
+          if [ -z "$DASHBOARD_KEY" ]; then
+            echo "Falta el secret CAMPAIGN_DASHBOARD_KEY"; exit 1
+          fi
+          RESP=$(curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"key\":\"${DASHBOARD_KEY}\",\"period\":\"yesterday\",\"notify\":\"telegram\"}" \
+            "$FUNCTION_URL")
+          echo "Respuesta: $RESP"
+          echo "$RESP" | grep -q '"ok":true' || { echo "El envío a Telegram falló"; exit 1; }

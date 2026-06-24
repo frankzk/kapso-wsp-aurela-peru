@@ -41,6 +41,54 @@ const LIMA_METRO_DISTRICTS = new Set([
   "villa el salvador", "ves", "villa maria del triunfo", "vmt",
 ]);
 
+// Nombres de distrito de >=2 palabras (y referencias frecuentes) que el cliente
+// suele escribir DENTRO de una frase mas larga, p.ej. "av pezet 131 san isidro"
+// o "lima/lima/santiago de surco". Se buscan por contencion de substring; todos
+// son lo bastante especificos como para no producir falsos positivos.
+const LIMA_METRO_PHRASES = [
+  "san juan de lurigancho", "san juan de miraflores", "san martin de porres",
+  "villa maria del triunfo", "villa el salvador", "santiago de surco",
+  "lurigancho chosica", "magdalena del mar", "santa maria del mar",
+  "pueblo libre", "cercado de lima", "centro de lima", "san isidro", "san borja",
+  "san luis", "san miguel", "la molina", "la victoria", "los olivos",
+  "el agustino", "jesus maria", "santa anita", "santa rosa", "puente piedra",
+  "punta hermosa", "punta negra", "san bartolo", "canto grande", "pte piedra",
+  "villa maria",
+];
+
+// Tokens de una sola palabra que identifican un distrito de Lima Metropolitana,
+// incluyendo abreviaturas y anexos/urbanizaciones conocidas (campoy/zarate=SJL,
+// huaycan/salamanca/ceres/santa clara/vitarte/huachipa=Ate, collique=Comas,
+// chacarilla/higuereta/monterrico=Surco, maranga=San Miguel). Se evaluan como
+// palabra completa, nunca como substring, para no matchear dentro de otra palabra.
+const LIMA_METRO_TOKENS = new Set([
+  "barranco", "brena", "chorrillos", "surquillo", "lince", "miraflores", "surco",
+  "rimac", "ancon", "carabayllo", "comas", "independencia", "ate", "chaclacayo",
+  "cieneguilla", "lurin", "pachacamac", "pucusana", "chosica", "lurigancho",
+  "vitarte", "huaycan", "campoy", "zarate", "huascar", "bayovar", "chacarilla",
+  "higuereta", "monterrico", "collique", "salamanca", "ceres", "huachipa",
+  "manchay", "maranga", "magdalena", "molina", "olivos", "agustino", "cercado",
+  "victoria", "porres", "porras",
+  "sjl", "smp", "vmt", "ves", "sjm",
+]);
+
+// Nombres largos de una palabra usados solo para tolerancia a typos (Levenshtein
+// por token). No incluye palabras cortas (<5) para evitar falsos positivos.
+// "barranco" se omite a proposito: su unico typo plausible ("barranca") es una
+// provincia distinta al norte de Lima, asi que solo se acepta exacto (via tokens).
+const LIMA_FUZZY_WORDS = [
+  "chorrillos", "surquillo", "miraflores", "carabayllo",
+  "independencia", "chaclacayo", "cieneguilla", "pachacamac", "pucusana",
+  "lurigancho", "chosica", "vitarte", "magdalena", "molina", "olivos",
+  "agustino", "cercado", "santiago", "comas", "rimac", "ancon", "brena",
+];
+
+// Callao es provincia aparte de Lima, pero tiene contraentrega a todo el Callao.
+// Si el cliente da solo el distrito del Callao (sin provincia) lo reconocemos aca.
+const CALLAO_TOKENS = new Set(["callao", "ventanilla", "bellavista", "pachacutec", "oquendo"]);
+const CALLAO_PHRASES = ["la perla", "la punta", "carmen de la legua", "carmen de la lengua", "mi peru"];
+const CALLAO_FUZZY_WORDS = ["callao", "ventanilla", "bellavista"];
+
 const DISTRICT_LOCATION_HINTS = {
   trujillo: { province: "trujillo", region: "la libertad" },
   "el porvenir": { province: "trujillo", region: "la libertad" },
@@ -111,7 +159,8 @@ async function handleRequest(request) {
   const cod = hasCashOnDelivery({ region, province, district });
 
   if (cod && !agencyRequested) {
-    const isLimaMetro = region === "lima" || province === "lima" || isLimaMetroDistrict(district);
+    const isLimaMetro = region === "lima" || province === "lima" || region === "callao"
+      || province === "callao" || isLimaMetroDistrict(district) || isCallaoDistrict(district);
     return json({
       cashOnDelivery: true,
       shippingMode: "contraentrega",
@@ -289,8 +338,9 @@ function hasCashOnDelivery({ region, province, district }) {
   if (candidates.some((item) => item === "lima")) return true;
 
   // El cliente dio solo el distrito (sin provincia/region): si es un distrito de
-  // Lima Metropolitana, igual tiene contraentrega.
+  // Lima Metropolitana o del Callao, igual tiene contraentrega.
   if (district && isLimaMetroDistrict(district)) return true;
+  if (district && isCallaoDistrict(district)) return true;
 
   for (const place of candidates) {
     const coveredDistricts = CASH_ON_DELIVERY[place];
@@ -308,18 +358,82 @@ function hasCashOnDelivery({ region, province, district }) {
 // abreviaturas cortas ("sjl", "ate", "ves", "vmt", "sjm").
 function isLimaMetroDistrict(district) {
   if (!district) return false;
-  if (LIMA_METRO_DISTRICTS.has(district)) return true;
+  const text = cleanDistrictText(district);
+  if (!text) return false;
 
+  // 1) match exacto del string completo o de una abreviatura conocida.
+  if (LIMA_METRO_DISTRICTS.has(text) || LIMA_METRO_TOKENS.has(text)) return true;
+
+  // 2) frase multi-palabra contenida en el texto (cliente pega direccion +
+  //    distrito, "lima/lima/X", referencias, etc.).
+  for (const phrase of LIMA_METRO_PHRASES) {
+    if (text.includes(phrase)) return true;
+  }
+
+  // 3) por token: palabra completa exacta, alias/anexo, o typo (Levenshtein).
+  const tokens = text.split(" ").filter(Boolean);
+  for (const tok of tokens) {
+    if (LIMA_METRO_TOKENS.has(tok) || LIMA_METRO_DISTRICTS.has(tok)) return true;
+    if (tok.length >= 5) {
+      for (const word of LIMA_FUZZY_WORDS) {
+        const maxDist = word.length >= 10 ? 2 : 1;
+        if (Math.abs(word.length - tok.length) > maxDist) continue;
+        if (levenshtein(tok, word) <= maxDist) return true;
+      }
+    }
+  }
+
+  // 4) fuzzy del string completo contra nombres largos de >=2 palabras (typos en
+  //    "santiago de surc", "villa maria del trinfo"). Se limita a nombres de >=10
+  //    letras: los cortos ya los cubre el match por token y abrirlos a fuzzy
+  //    genera falsos positivos (p.ej. "barranca", provincia distinta, vs barranco).
   for (const known of LIMA_METRO_DISTRICTS) {
-    if (known.length < 5) continue; // no fuzzy en abreviaturas (sjl, ate, ves, vmt, sjm)
-    // Exigir misma inicial: los typos rara vez cambian la primera letra, pero
-    // distritos distintos de otras regiones si (ej. "lomas"/"tomas" vs "comas").
-    if (known[0] !== district[0]) continue;
-    const maxDist = known.length >= 10 ? 2 : 1;
-    if (Math.abs(known.length - district.length) > maxDist) continue;
-    if (levenshtein(district, known) <= maxDist) return true;
+    if (known.length < 10) continue;
+    const maxDist = known.length >= 12 ? 3 : 2;
+    if (Math.abs(known.length - text.length) > maxDist) continue;
+    if (levenshtein(text, known) <= maxDist) return true;
+  }
+
+  return false;
+}
+
+// Reconoce un distrito del Callao (provincia aparte de Lima) cuando el cliente
+// da solo el distrito sin la provincia. Todo el Callao tiene contraentrega.
+function isCallaoDistrict(district) {
+  if (!district) return false;
+  const text = cleanDistrictText(district);
+  if (!text) return false;
+  if (CALLAO_TOKENS.has(text)) return true;
+  for (const phrase of CALLAO_PHRASES) {
+    if (text.includes(phrase)) return true;
+  }
+  for (const tok of text.split(" ").filter(Boolean)) {
+    if (CALLAO_TOKENS.has(tok)) return true;
+    if (tok.length >= 5) {
+      for (const word of CALLAO_FUZZY_WORDS) {
+        const maxDist = word.length >= 10 ? 2 : 1;
+        if (Math.abs(word.length - tok.length) > maxDist) continue;
+        if (levenshtein(tok, word) <= maxDist) return true;
+      }
+    }
   }
   return false;
+}
+
+// Limpia el texto del distrito que escribe el cliente antes de compararlo:
+// elimina separadores tipo "Lima/Lima/X", viñetas y prefijos basura, numeros
+// sueltos, y colapsa abreviaturas deletreadas ("s j l" / "s.j.l" -> "sjl").
+// Asume entrada ya normalizada (minusculas, sin acentos) por normalizePlace.
+function cleanDistrictText(value) {
+  let text = stripAccents(String(value || "").toLowerCase());
+  text = text.replace(/[^a-z0-9 ]+/g, " ");
+  text = text.replace(/\b\d+\b/g, " ");
+  text = text.replace(/\s+/g, " ").trim();
+  // Colapsar abreviaturas deletreadas DESPUES de unificar espacios, para que
+  // "s. j. l." (que deja doble espacio al quitar los puntos) tambien funcione.
+  text = text.replace(/\b([a-z]) ([a-z]) ([a-z])\b/g, "$1$2$3");
+  text = text.replace(/\b([a-z]) ([a-z])\b/g, "$1$2");
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function levenshtein(a, b) {
@@ -419,11 +533,13 @@ function json(body, status = 200) {
 }
 
 globalThis.__aurelaCheckCoverage = {
+  cleanDistrictText,
   detectCourier,
   detectLocationInconsistency,
   handleRequest,
   handler,
   hasCashOnDelivery,
+  isCallaoDistrict,
   isLimaMetroDistrict,
   levenshtein,
   normalizePlace,

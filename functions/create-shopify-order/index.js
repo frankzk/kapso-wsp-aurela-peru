@@ -1,5 +1,6 @@
 const DEFAULT_SHOP_DOMAIN = "aurela-peru.myshopify.com";
 const DEFAULT_API_VERSION = "2026-04";
+const DEFAULT_PHONE_NUMBER_ID = "1241790819006805"; // numero de WhatsApp de Aurela (fallback para atribucion CTWA)
 const MAX_QUANTITY = 50; // tope de seguridad: evita ordenes accidentales de miles de unidades
 // Reglas de promo/envio (espejo de quote-order): el descuento 3x2/5x3 se calcula
 // aqui en el servidor desde los precios reales, sin depender de que el agente lo pase.
@@ -43,6 +44,11 @@ async function handleRequest(request, env = globalThis) {
     }
 
     const config = await getConfig(env);
+    // Atribucion CTWA (Click-to-WhatsApp): lee el referral del anuncio desde el
+    // primer mensaje de la conversacion via API de Kapso, de forma determinista
+    // (sin depender de que el agente lo pase). Fail-soft: null si no hay key,
+    // no hay referral (trafico organico) o la consulta falla.
+    input.ctwaReferral = await fetchCtwaReferral(env, input);
     const orderInput = await buildOrderInput(config, input);
 
     // Check final de stock por variante (cubre el caso en que el agente pasa variantId
@@ -158,6 +164,56 @@ async function getKvConfig(env) {
     SHOPIFY_API_VERSION: apiVersion,
     SHOPIFY_SHOP_DOMAIN: shopDomain,
   };
+}
+
+// Config para llamar a la API de Kapso (atribucion CTWA). La API key del proyecto
+// va en runtime_config (gitignored), igual que el token de Shopify.
+function getKapsoConfig(env = globalThis) {
+  const apiKey = env.KAPSO_API_KEY || env.kAPSOAPIKEY || globalThis.KAPSO_API_KEY || globalThis.kAPSOAPIKEY;
+  const apiBase = env.KAPSO_API_BASE || env.kAPSOAPIBASE || globalThis.KAPSO_API_BASE || "https://api.kapso.ai";
+  return { apiKey, apiBase };
+}
+
+const CTWA_MAX_PAGES = 5; // tope de paginas (100 msgs c/u) al buscar el referral
+
+// Busca el objeto referral del anuncio (Click-to-WhatsApp) en los mensajes
+// entrantes de la conversacion. El referral solo viene en el PRIMER mensaje, que
+// es el mas antiguo; los mensajes llegan del mas nuevo al mas viejo, asi que
+// paginamos con el cursor `next` hasta encontrarlo. Devuelve null si no hay key,
+// no hay conversationId, no aparece referral, o algo falla (nunca lanza).
+async function fetchCtwaReferral(env, input) {
+  try {
+    const { apiKey, apiBase } = getKapsoConfig(env);
+    const conversationId = input.conversationId || input.conversation_id;
+    const phoneNumberId =
+      input.phoneNumberId || input.phone_number_id || input.whatsappPhoneNumberId || input.whatsapp_phone_number_id || DEFAULT_PHONE_NUMBER_ID;
+    if (!apiKey || !conversationId || !phoneNumberId) return null;
+
+    let url = `${apiBase}/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/messages?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=100`;
+    for (let page = 0; page < CTWA_MAX_PAGES && url; page += 1) {
+      const response = await fetch(url, { headers: { "X-API-Key": apiKey, "Content-Type": "application/json" } });
+      if (!response.ok) return null;
+      const payload = await response.json();
+      const messages = payload?.data || [];
+      for (const message of messages) {
+        const referral = extractReferral(message);
+        if (referral) return referral;
+      }
+      const nextCursor = payload?.paging?.cursors?.after || payload?.paging?.next;
+      if (!nextCursor || payload?.paging?.next === null) break;
+      url = `${apiBase}/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/messages?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=100&after=${encodeURIComponent(nextCursor)}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// El referral puede venir en distintos lugares segun el shape del payload.
+function extractReferral(message) {
+  const referral = message?.referral || message?.message?.referral || message?.kapso?.referral;
+  if (referral && (referral.source_id || referral.source_type || referral.ctwa_clid)) return referral;
+  return null;
 }
 
 async function buildOrderInput(config, input) {
@@ -511,6 +567,21 @@ function buildCustomAttributes(input) {
   if (conversationId) attrs.push({ key: "kapso_conversation_id", value: String(conversationId) });
   if (phoneNumberId) attrs.push({ key: "kapso_phone_number_id", value: String(phoneNumberId) });
   attrs.push({ key: "source", value: "whatsapp-bot" });
+
+  // Atribucion de campana Click-to-WhatsApp: enlaza la orden con el anuncio de
+  // origen para medir ventas por campana/anuncio en el panel.
+  const ref = input.ctwaReferral;
+  if (ref) {
+    const add = (key, value) => {
+      const v = String(value ?? "").trim();
+      if (v) attrs.push({ key, value: v.slice(0, 250) });
+    };
+    add("ctwa_source_type", ref.source_type); // ad | post | organic
+    add("ctwa_ad_id", ref.source_id);          // ID del anuncio (clave de atribucion)
+    add("ctwa_clid", ref.ctwa_clid);           // click id (atribucion fina)
+    add("ctwa_headline", ref.headline);        // titulo legible del anuncio
+    add("ctwa_source_url", ref.source_url);
+  }
   return attrs;
 }
 
@@ -527,6 +598,7 @@ function buildTags(input) {
     tags.add("pedido-confirmado");
   }
   if (input.quote?.promoApplied || input.quote?.promo_applied) tags.add("promo-whatsapp");
+  if (input.ctwaReferral?.source_type === "ad") tags.add("ctwa-ad");
   if (input.stockPorValidar || input.stock_por_validar || input.stockValidationRequired || input.stock_validation_required) tags.add("stock-por-validar");
   if (input.specialDeliveryNote || input.special_delivery_note) tags.add("fecha-hora-especial");
   return [...tags];
@@ -725,4 +797,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaCreateShopifyOrder = { buildOrderInput, computePricing, countFreeUnits, handleRequest, handler };
+globalThis.__aurelaCreateShopifyOrder = { buildOrderInput, computePricing, countFreeUnits, fetchCtwaReferral, handleRequest, handler };

@@ -1,0 +1,110 @@
+{
+  "functions": {
+    "campaign-report": {
+      "files": {
+        "functions/campaign-report/function.yaml": "afc604a5c7f8fabfb88f505d1d776bd9141dd73945c9aac101418cc4d3e2dadb",
+        "functions/campaign-report/index.js": "80bbf7375521065d6ad4209b85a8b185d562911f1c9d86320d0ddbcab87b4c86"
+      },
+      "id": "b9b96196-14f5-4ba0-8bd8-d48b0334d292",
+      "lastDeployedAt": "2026-06-24T11:43:07-04:00",
+      "lockVersion": 11,
+      "slug": "campaign-report",
+      "status": "deployed",
+      "updatedAt": "2026-06-24T11:43:07-04:00"
+    },
+    "check-coverage": {
+      "files": {
+        "functions/check-coverage/function.yaml": "ac1fd7069d5ebd0442d0bae413e8d6ec43eafed28c57cd19bb2f8cc08e3e416b",
+        "functions/check-coverage/index.js": "3bf64339064f65777b59c2511457cb31393ce059fa872a0dcf971039595986d0"
+      },
+      "id": "f9ddb618-7f39-4ee3-af23-4d9733ba5d55",
+      "lastDeployedAt": "2026-06-24T16:50:49-04:00",
+      "lockVersion": 36,
+      "slug": "check-coverage",
+      "status": "deployed",
+      "updatedAt": "2026-06-24T16:50:49-04:00"
+    },
+    "create-shopify-order": {
+      "files": {
+        "functions/create-shopify-order/function.yaml": "6c05de9e95183c4a287509e7756eeac91ee2907d43d580fa3647abe73c5f2c72",
+        "functions/create-shopify-order/index.js": "30357e5a345fed3e612d8f084cdee58fc6e1ef8a32428defc0199f55abe8aedb"
+      },
+      "id": "7b63c9c1-4405-4e86-876a-f7fccf7daa12",
+      "lastDeployedAt": "2026-06-24T11:26:19-04:00",
+      "lockVersion": 49,
+      "slug": "create-shopify-order",
+      "status": "deployed",
+      "updatedAt": "2026-06-24T11:26:19-04:00"
+    },
+    "notify-team": {
+      "files": {
+        "functions/notify-team/function.yaml": "44aae76e429b5bc3b31b46e1a582322187b291554023c63075563480dd135b37",
+        "functions/notify-team/index.js": "e1bba9e56fb4933ec91917e057bff7208f41c201ab4db79e75b039a494866161"
+      },
+      "id": "fc7a67ec-dc65-420f-8cf5-79a0be4b032b",
+      "lastDeployedAt": "2026-06-22T23:04:50-04:00",
+      "lockVersion": 1,
+      "slug": "notify-team",
+      "status": "deployed",
+      "updatedAt": "2026-06-22T23:04:50-04:00"
+    },
+    "product-media-lookup": {
+      "files": {
+        "functions/product-media-lookup/function.yaml": "69f2f86bddc60d4c3370f2e3d59f0de2903c8d175079da359b656293e46150fb",
+        "functions/product-media-lookup/index.js": "f55f6c5008fb0253541d422f88a2dd8f895782875f830468899ae562525e17f1"
+      },
+      "id": "fd613abc-f34d-4438-9645-2565bce52455",
+      "lastDeployedAt": "2026-06-21T01:45:22-04:00",
+      "lockVersion": 5,
+      "slug": "product-media-lookup",
+      "status": "deployed",
+      "updatedAt": "2026-06-21T01:45:22-04:00"
+    },
+    "quote-order": {
+      "files": {
+        "functions/quote-order/function.yaml": "1ab0707e715d98dba3db7e06991ce364c79aafea2a58c7f6ee24378e5a530b5a",
+        "functions/quote-order/index.js": "eb21394dcf534398cbe351d5e90812f74d86c3b029c21ee1c3ebe67d180a8613"
+      },
+      "id": "807a8f55-77ac-4df6-aa03-e19035fa4ffc",
+      "lastDeployedAt": "2026-06-21T19:35:47-04:00",
+      "lockVersion": 23,
+      "slug": "quote-order",
+      "status": "deployed",
+      "updatedAt": "2026-06-21T19:35:47-04:00"
+    },
+    "shopify-product-lookup": {
+      "files": {
+        "functions/shopify-product-lookup/function.yaml": "9a7e173f5998f3002b03b8f6cf803c32b2152441cc535e82dad889bdf00335d0",
+        "functions/shopify-product-lookup/index.js": "3d6ac40048b8ef7444c1ef1aadf0cdca466b1a4ab8815945d27ba720f5af24f0"
+      },
+      "id": "b95fa79b-ccea-4f74-b743-940792947e5e",
+      "lastDeployedAt": "2026-06-21T18:55:22-04:00",
+      "lockVersion": 42,
+      "slug": "shopify-product-lookup",
+      "status": "deployed",
+      "updatedAt": "2026-06-21T18:55:22-04:00"
+    }
+  },
+  "version": 1,
+  "workflows": {
+    "aurela-sales-bot": {
+      "files": {
+        "workflows/aurela-sales-bot/definition.json": "05686cbdb06dba36c8ff6c29cb73e11fef18e101962afa624e676b3a815f50db",
+        "workflows/aurela-sales-bot/workflow.yaml": "68ca00c3ebaf5fc6c73bfed5f04bb21badd94f33ef24701b051bf08eaed98d0e"
+      },
+      "generatedSource": {
+        "hash": "72b423f53fdc1c75c09bef330a50a875f396e07fd33d831d48cc25523f6bfcc0",
+        "path": "workflows/aurela-sales-bot/workflow.js"
+      },
+      "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
+      "lockVersion": 161,
+      "slug": "aurela-sales-bot",
+      "sourceFile": {
+        "hash": "4d2b455d7df6d419796f43526f906196e9723312227738701359da61f6eed50c",
+        "path": "workflows/aurela-sales-bot/workflow.js"
+      },
+      "status": "active",
+      "updatedAt": "2026-06-23T16:30:17-04:00"
+    }
+  }
+}

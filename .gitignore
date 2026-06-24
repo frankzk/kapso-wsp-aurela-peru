@@ -1,0 +1,3 @@
+# Kapso function config contains runtime_config secrets (e.g. Shopify admin tokens).
+# Managed in the Kapso dashboard / via `kapso pull`; never commit to git.
+functions/**/function.yaml

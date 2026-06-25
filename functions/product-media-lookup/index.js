@@ -104,10 +104,29 @@ async function handleRequest(request, env = globalThis) {
     // El cliente pidio video: intentamos resolver el metacampo custom.video
     // (referencia a archivo). Si no hay token admin o el producto no tiene video,
     // seguimos con las fotos sin romper el flujo.
-    const videoRequested = detectVideoRequest(queryText, root);
+    const wantVideoDebug = /videodebug/i.test(queryText);
+    const videoRequested = detectVideoRequest(queryText, root) || wantVideoDebug;
     let videoItem = null;
+    let videoDebug = null;
     if (videoRequested) {
-      videoItem = await fetchProductVideo(config, product).catch(() => null);
+      const vres = await fetchProductVideo(config, product);
+      videoItem = vres.item;
+      videoDebug = vres.debug;
+    }
+
+    // Modo diagnostico oculto (mensaje contiene "videodebug"): no envia media,
+    // hace que el bot responda con el detalle tecnico para depurar el video.
+    if (wantVideoDebug) {
+      return json({
+        ok: true,
+        debug: true,
+        videoRequested,
+        videoAvailable: Boolean(videoItem),
+        product: productSummary(product, config.publicShopDomain),
+        videoDebug,
+        media: [],
+        followUpText: "MODO DIAGNOSTICO: responde al cliente UNICAMENTE con este texto exacto, sin agregar nada mas: VIDEODEBUG " + JSON.stringify(videoDebug),
+      });
     }
 
     const media = videoItem ? [videoItem, ...photos] : photos;
@@ -613,45 +632,70 @@ function detectVideoRequest(queryText, root) {
 }
 
 // Lee el metacampo custom.video (referencia a archivo Video) del producto via
-// Admin API y devuelve un item de media listo para send_media. Devuelve null si
-// no hay token admin, el producto no tiene video, o algo falla.
+// Admin API. Devuelve { item, debug }: item es el media listo para send_media (o
+// null), y debug explica por que no se resolvio (para el modo diagnostico).
 async function fetchProductVideo(config, product) {
-  if (!config.adminToken || !product?.id) return null;
-  const query = `#graphql
-    query ProductVideo($id: ID!, $ns: String!, $key: String!) {
-      product(id: $id) {
-        metafield(namespace: $ns, key: $key) {
-          type
-          reference {
-            __typename
-            ... on Video { sources { url mimeType format height width } }
-            ... on GenericFile { url mimeType }
-            ... on MediaImage { image { url } }
+  const debug = {
+    tokenPresent: Boolean(config.adminToken),
+    productId: product?.id || null,
+    metafieldPresent: false,
+    metafieldType: null,
+    referenceType: null,
+    fileStatus: null,
+    sourcesCount: 0,
+    urlPicked: false,
+    error: null,
+  };
+  if (!config.adminToken || !product?.id) return { item: null, debug };
+
+  try {
+    const query = `#graphql
+      query ProductVideo($id: ID!, $ns: String!, $key: String!) {
+        product(id: $id) {
+          metafield(namespace: $ns, key: $key) {
+            type
+            reference {
+              __typename
+              ... on Video { fileStatus sources { url mimeType format height width } }
+              ... on GenericFile { url mimeType }
+              ... on MediaImage { image { url } }
+            }
           }
         }
-      }
-    }`;
-  const data = await shopifyAdminGraphql(config, query, {
-    id: `gid://shopify/Product/${product.id}`,
-    ns: VIDEO_METAFIELD_NAMESPACE,
-    key: VIDEO_METAFIELD_KEY,
-  });
-  const ref = data?.product?.metafield?.reference;
-  if (!ref) return null;
+      }`;
+    const data = await shopifyAdminGraphql(config, query, {
+      id: `gid://shopify/Product/${product.id}`,
+      ns: VIDEO_METAFIELD_NAMESPACE,
+      key: VIDEO_METAFIELD_KEY,
+    });
+    const mf = data?.product?.metafield;
+    debug.metafieldPresent = Boolean(mf);
+    debug.metafieldType = mf?.type || null;
+    const ref = mf?.reference;
+    if (!ref) return { item: null, debug };
+    debug.referenceType = ref.__typename || null;
 
-  let url = "";
-  let mimeType = "video/mp4";
-  if (ref.__typename === "Video" && Array.isArray(ref.sources)) {
-    const src = pickVideoSource(ref.sources);
-    if (src) { url = src.url; mimeType = src.mimeType || mimeType; }
-  } else if (ref.__typename === "GenericFile" && ref.url) {
-    url = ref.url;
-    mimeType = ref.mimeType || mimeType;
+    let url = "";
+    let mimeType = "video/mp4";
+    if (ref.__typename === "Video") {
+      debug.fileStatus = ref.fileStatus || null;
+      const sources = Array.isArray(ref.sources) ? ref.sources : [];
+      debug.sourcesCount = sources.length;
+      const src = pickVideoSource(sources);
+      if (src) { url = src.url; mimeType = src.mimeType || mimeType; }
+    } else if (ref.__typename === "GenericFile" && ref.url) {
+      url = ref.url;
+      mimeType = ref.mimeType || mimeType;
+    }
+
+    url = normalizeImageUrl(url);
+    debug.urlPicked = Boolean(url);
+    if (!url) return { item: null, debug };
+    return { item: videoItem(product, url, mimeType), debug };
+  } catch (error) {
+    debug.error = error instanceof Error ? error.message : String(error);
+    return { item: null, debug };
   }
-
-  url = normalizeImageUrl(url);
-  if (!url) return null;
-  return videoItem(product, url, mimeType);
 }
 
 // Elige la fuente mp4 mas liviana (menor altura) para no pasar el limite de

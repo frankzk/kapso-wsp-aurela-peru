@@ -51,14 +51,14 @@
     "product-media-lookup": {
       "files": {
         "functions/product-media-lookup/function.yaml": "15d304e3dc20d2dc1a2b26f402e7eee55fe99d44984dc0de99f38eba82553b9e",
-        "functions/product-media-lookup/index.js": "fcb356e3f90d68028f8852da7308d873bd381e8e90317ef0ae6de59e4b57fa27"
+        "functions/product-media-lookup/index.js": "6bd07f0847c543764477ebdada86e9334e22796507084def309d290cf8009d20"
       },
       "id": "fd613abc-f34d-4438-9645-2565bce52455",
-      "lastDeployedAt": "2026-06-24T22:06:00-04:00",
-      "lockVersion": 9,
+      "lastDeployedAt": "2026-06-25T01:47:14-04:00",
+      "lockVersion": 11,
       "slug": "product-media-lookup",
       "status": "deployed",
-      "updatedAt": "2026-06-24T22:06:00-04:00"
+      "updatedAt": "2026-06-25T01:47:14-04:00"
     },
     "quote-order": {
       "files": {

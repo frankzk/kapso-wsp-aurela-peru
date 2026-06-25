@@ -1,4 +1,8 @@
 const DEFAULT_PUBLIC_SHOP_DOMAIN = "aurela.pe";
+const DEFAULT_ADMIN_SHOP_DOMAIN = "aurela-peru.myshopify.com";
+const DEFAULT_ADMIN_API_VERSION = "2026-04";
+const VIDEO_METAFIELD_NAMESPACE = "custom";
+const VIDEO_METAFIELD_KEY = "video";
 const CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_CATALOG_PAGES = 20;
 
@@ -20,6 +24,8 @@ const STOPWORDS = new Set([
   "quiero",
   "tienes",
   "ver",
+  "video",
+  "videos",
 ]);
 
 // Synonyms so customer terms match catalog wording (e.g. "medias" == "calcetines" in Peru).
@@ -93,29 +99,48 @@ async function handleRequest(request, env = globalThis) {
       });
     }
 
-    const media = buildMediaItems(product, { limit, requestedVariant });
+    const photos = buildMediaItems(product, { limit, requestedVariant });
+
+    // El cliente pidio video: intentamos resolver el metacampo custom.video
+    // (referencia a archivo). Si no hay token admin o el producto no tiene video,
+    // seguimos con las fotos sin romper el flujo.
+    const videoRequested = detectVideoRequest(queryText, root);
+    let videoItem = null;
+    if (videoRequested) {
+      videoItem = await fetchProductVideo(config, product).catch(() => null);
+    }
+
+    const media = videoItem ? [videoItem, ...photos] : photos;
+
     if (media.length === 0) {
       return json({
         ok: false,
         found: true,
+        videoRequested,
+        videoAvailable: false,
         reason: "media_not_found",
         product: productSummary(product, config.publicShopDomain),
-        message: "El producto existe, pero no encontre fotos publicas disponibles para enviar como media.",
+        message: "El producto existe, pero no encontre fotos ni video publicos para enviar como media.",
       });
     }
 
+    const videoAvailable = Boolean(videoItem);
     return json({
       ok: true,
       found: true,
+      videoRequested,
+      videoAvailable,
       product: productSummary(product, config.publicShopDomain),
       media,
       count: media.length,
       sendMediaInstructions: [
-        "Usa la herramienta send_media para enviar cada item como imagen de WhatsApp.",
+        "Usa la herramienta send_media para enviar cada item como media real de WhatsApp (los de type video como video, los de type image como imagen).",
         "No escribas ni pegues estas URLs en texto al cliente.",
-        "No uses Markdown de imagen.",
+        "No uses Markdown de imagen ni de enlace.",
       ].join(" "),
-      followUpText: "Te muestro las fotos reales. Despues de enviarlas, ofrece precio y promo y cierra con la pregunta cerrada de dos opciones (1 unidad/par vs 3x2). No preguntes si quiere saber el precio.",
+      followUpText: videoRequested && !videoAvailable
+        ? "No hay video para este producto: avisa breve que por ahora no tienes video y envia las fotos reales. Luego ofrece precio y promo y cierra con la pregunta cerrada (1 vs 3x2)."
+        : "Te muestro la media real. Despues de enviarla, ofrece precio y promo y cierra con la pregunta cerrada de dos opciones (1 unidad/par vs 3x2). No preguntes si quiere saber el precio.",
     });
   } catch (error) {
     return json({
@@ -151,7 +176,22 @@ function getConfig(env = globalThis) {
     globalThis.sHOPIFYPUBLICSHOPDOMAIN ||
     DEFAULT_PUBLIC_SHOP_DOMAIN;
 
-  return { publicShopDomain };
+  // Credenciales Admin (mismas que create-shopify-order) para leer el metacampo
+  // custom.video, que NO viene en el products.json publico. Opcionales: si no
+  // estan configuradas, la funcion sigue devolviendo solo fotos.
+  const adminShopDomain =
+    env.SHOPIFY_SHOP_DOMAIN || env.sHOPIFYSHOPDOMAIN ||
+    globalThis.SHOPIFY_SHOP_DOMAIN || globalThis.sHOPIFYSHOPDOMAIN ||
+    DEFAULT_ADMIN_SHOP_DOMAIN;
+  const adminApiVersion =
+    env.SHOPIFY_API_VERSION || env.sHOPIFYAPIVERSION ||
+    globalThis.SHOPIFY_API_VERSION || globalThis.sHOPIFYAPIVERSION ||
+    DEFAULT_ADMIN_API_VERSION;
+  const adminToken =
+    env.SHOPIFY_ADMIN_ACCESS_TOKEN || env.sHOPIFYADMINACCESSTOKEN ||
+    globalThis.SHOPIFY_ADMIN_ACCESS_TOKEN || globalThis.sHOPIFYADMINACCESSTOKEN || "";
+
+  return { publicShopDomain, adminShopDomain, adminApiVersion, adminToken };
 }
 
 function collectInputText(input) {
@@ -565,6 +605,94 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function detectVideoRequest(queryText, root) {
+  if (root && (root.includeVideo === true || root.wantsVideo === true || root.video === true)) return true;
+  const flag = String((root && (root.mediaType || root.media_type)) || "").toLowerCase();
+  if (flag === "video") return true;
+  return /\bvideos?\b/i.test(String(queryText || ""));
+}
+
+// Lee el metacampo custom.video (referencia a archivo Video) del producto via
+// Admin API y devuelve un item de media listo para send_media. Devuelve null si
+// no hay token admin, el producto no tiene video, o algo falla.
+async function fetchProductVideo(config, product) {
+  if (!config.adminToken || !product?.id) return null;
+  const query = `#graphql
+    query ProductVideo($id: ID!, $ns: String!, $key: String!) {
+      product(id: $id) {
+        metafield(namespace: $ns, key: $key) {
+          type
+          reference {
+            __typename
+            ... on Video { sources { url mimeType format height width } }
+            ... on GenericFile { url mimeType }
+            ... on MediaImage { image { url } }
+          }
+        }
+      }
+    }`;
+  const data = await shopifyAdminGraphql(config, query, {
+    id: `gid://shopify/Product/${product.id}`,
+    ns: VIDEO_METAFIELD_NAMESPACE,
+    key: VIDEO_METAFIELD_KEY,
+  });
+  const ref = data?.product?.metafield?.reference;
+  if (!ref) return null;
+
+  let url = "";
+  let mimeType = "video/mp4";
+  if (ref.__typename === "Video" && Array.isArray(ref.sources)) {
+    const src = pickVideoSource(ref.sources);
+    if (src) { url = src.url; mimeType = src.mimeType || mimeType; }
+  } else if (ref.__typename === "GenericFile" && ref.url) {
+    url = ref.url;
+    mimeType = ref.mimeType || mimeType;
+  }
+
+  url = normalizeImageUrl(url);
+  if (!url) return null;
+  return videoItem(product, url, mimeType);
+}
+
+// Elige la fuente mp4 mas liviana (menor altura) para no pasar el limite de
+// 16MB de WhatsApp; cae a la primera fuente con url si faltan metadatos.
+function pickVideoSource(sources) {
+  const mp4 = sources.filter((s) => s && s.url && (/mp4/i.test(s.mimeType || "") || /mp4/i.test(s.format || "")));
+  const pool = mp4.length ? mp4 : sources.filter((s) => s && s.url);
+  if (pool.length === 0) return null;
+  return pool.slice().sort((a, b) => (Number(a.height) || 1e9) - (Number(b.height) || 1e9))[0];
+}
+
+function videoItem(product, url, mimeType) {
+  return {
+    mediaType: "video",
+    type: "video",
+    label: "Video",
+    caption: product.title || "Video",
+    url,
+    mediaUrl: url,
+    mimeType: mimeType || "video/mp4",
+  };
+}
+
+async function shopifyAdminGraphql(config, query, variables) {
+  const response = await fetch(
+    `https://${config.adminShopDomain}/admin/api/${config.adminApiVersion}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": config.adminToken,
+      },
+      body: JSON.stringify({ query, variables }),
+    },
+  );
+  if (!response.ok) throw new Error(`Admin GraphQL HTTP ${response.status}`);
+  const payload = await response.json();
+  if (payload.errors) throw new Error(`Admin GraphQL: ${JSON.stringify(payload.errors)}`);
+  return payload.data;
+}
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -572,4 +700,12 @@ function json(body, status = 200) {
   });
 }
 
-globalThis.__aurelaProductMediaLookup = { buildMediaItems, handleRequest, handler };
+globalThis.__aurelaProductMediaLookup = {
+  buildMediaItems,
+  detectVideoRequest,
+  fetchProductVideo,
+  handleRequest,
+  handler,
+  pickVideoSource,
+  videoItem,
+};

@@ -50,15 +50,15 @@
     },
     "product-media-lookup": {
       "files": {
-        "functions/product-media-lookup/function.yaml": "69f2f86bddc60d4c3370f2e3d59f0de2903c8d175079da359b656293e46150fb",
-        "functions/product-media-lookup/index.js": "f55f6c5008fb0253541d422f88a2dd8f895782875f830468899ae562525e17f1"
+        "functions/product-media-lookup/function.yaml": "15d304e3dc20d2dc1a2b26f402e7eee55fe99d44984dc0de99f38eba82553b9e",
+        "functions/product-media-lookup/index.js": "fcb356e3f90d68028f8852da7308d873bd381e8e90317ef0ae6de59e4b57fa27"
       },
       "id": "fd613abc-f34d-4438-9645-2565bce52455",
-      "lastDeployedAt": "2026-06-21T01:45:22-04:00",
-      "lockVersion": 5,
+      "lastDeployedAt": "2026-06-24T22:06:00-04:00",
+      "lockVersion": 9,
       "slug": "product-media-lookup",
       "status": "deployed",
-      "updatedAt": "2026-06-21T01:45:22-04:00"
+      "updatedAt": "2026-06-24T22:06:00-04:00"
     },
     "quote-order": {
       "files": {
@@ -89,22 +89,22 @@
   "workflows": {
     "aurela-sales-bot": {
       "files": {
-        "workflows/aurela-sales-bot/definition.json": "1af1cdead6a3879fd8cd3a05e0994f0516f02ab861b6f59c94e07134b04361b5",
+        "workflows/aurela-sales-bot/definition.json": "9919b0d45c18cd2db9a00d7281553d728f7660ee2f9968f77c40a53dae98135b",
         "workflows/aurela-sales-bot/workflow.yaml": "68ca00c3ebaf5fc6c73bfed5f04bb21badd94f33ef24701b051bf08eaed98d0e"
       },
       "generatedSource": {
-        "hash": "22a81c0dc082b9938d3eba52907255291d5a9b4d3c6a38e19fec1f5d4ebd08c6",
+        "hash": "54dfb455ed87606c19dcafbad488e184b17ea270be00efac4545ff50629b317f",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 221,
+      "lockVersion": 235,
       "slug": "aurela-sales-bot",
       "sourceFile": {
-        "hash": "b3b0b89c55666c3ea98592b4f23d35435731b536d2b3d7b4477bca65210245bd",
+        "hash": "0100e7d5c55abcc95559e5443a1fd53fa74a298948e44f3b1170e30f841cfb82",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "status": "active",
-      "updatedAt": "2026-06-24T19:27:52-04:00"
+      "updatedAt": "2026-06-24T22:04:57-04:00"
     }
   }
 }

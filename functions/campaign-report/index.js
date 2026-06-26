@@ -21,9 +21,12 @@ const DEFAULT_API_VERSION = "2026-04";
 const DEFAULT_META_API_VERSION = "v21.0";
 const MAX_ORDER_PAGES = 12; // 12 x 250 = 3000 ordenes por rango
 const MAX_META_PAGES = 20;
-const MAX_CONV_PAGES = 30; // por numero: 30 x 100 = 3000 conversaciones por rango
+const MAX_CONV_PAGES = 50; // por numero: 50 x 100 = 5000 conversaciones por rango
 const MAX_CONV_DAYS = 16;  // la conversion se calcula para rangos <= 16 dias (evita timeouts del worker)
-const DEFAULT_PHONE_NUMBER_IDS = ["1241790819006805", "1022274334303691"];
+// Numero principal del bot. El 2do trigger (1022274334303691) se excluye del
+// denominador por defecto: tuvo un evento masivo (~2900 chats en un dia) que no
+// es flujo organico de leads. Override con WHATSAPP_PHONE_NUMBER_IDS si hace falta.
+const DEFAULT_PHONE_NUMBER_IDS = ["1241790819006805"];
 const DEFAULT_DAYS = 30;
 const LIMA_OFFSET_MS = 5 * 60 * 60 * 1000; // America/Lima = UTC-5 (sin DST)
 
@@ -41,6 +44,10 @@ async function handleRequest(request, env = globalThis) {
   const params = await readParams(request);
   const wantsJson = params.format === "json" || /application\/json/i.test(request.headers.get("accept") || "");
   const config = getConfig(env);
+
+  // Fallback: permitir pasar la Kapso API key por parametro (kapso_key) cuando el
+  // env del worker no la expone. Solo util para quien ya tiene la dashboard key.
+  if (!config.kapsoApiKey && params.kapso_key) config.kapsoApiKey = String(params.kapso_key);
 
   // Guarda de acceso: si hay key configurada, exigirla. Si no hay key configurada,
   // bloquear por defecto (no exponer ventas por accidente).
@@ -386,8 +393,9 @@ async function fetchConversationStats(config, range) {
   let truncated = false;
 
   const buildUrl = (phoneId, cursor) => {
-    let u = `${config.kapsoApiBase}/meta/whatsapp/${encodeURIComponent(phoneId)}/conversations`
-      + `?last_active_since=${encodeURIComponent(range.sinceIso)}&last_active_until=${encodeURIComponent(range.untilIso)}&limit=100`;
+    let u = `${config.kapsoApiBase}/platform/v1/whatsapp/conversations`
+      + `?phone_number_id=${encodeURIComponent(phoneId)}`
+      + `&created_after=${encodeURIComponent(range.sinceIso)}&created_before=${encodeURIComponent(range.untilIso)}&limit=100`;
     if (cursor) u += `&after=${encodeURIComponent(cursor)}`;
     return u;
   };

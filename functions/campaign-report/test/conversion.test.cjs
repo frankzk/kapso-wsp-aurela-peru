@@ -16,7 +16,7 @@ globalThis.fetch = async (url) => {
   if (u.includes("/admin/api/") && u.includes("graphql.json")) {
     return { ok: true, json: async () => ({ data: { orders: { nodes: ORDERS, pageInfo: { hasNextPage: false, endCursor: null } } } }) };
   }
-  if (u.includes("/meta/whatsapp/") && u.includes("/conversations")) {
+  if (u.includes("/whatsapp/conversations")) {
     if (u.includes("1241790819006805")) {
       return { ok: true, json: async () => ({ data: [
         { id: "a1", created_at: "2026-06-25T12:00:00Z" }, { id: "a2", created_at: "2026-06-25T13:00:00Z" },
@@ -33,7 +33,7 @@ globalThis.fetch = async (url) => {
   return { ok: false, status: 404, json: async () => ({}) };
 };
 
-const env = { sHOPIFYADMINACCESSTOKEN: "x", sHOPIFYSHOPDOMAIN: "aurela-peru.myshopify.com", sHOPIFYAPIVERSION: "2026-04", dASHBOARDACCESSKEY: "K", kAPSOAPIKEY: "kap" };
+const env = { sHOPIFYADMINACCESSTOKEN: "x", sHOPIFYSHOPDOMAIN: "aurela-peru.myshopify.com", sHOPIFYAPIVERSION: "2026-04", dASHBOARDACCESSKEY: "K", kAPSOAPIKEY: "kap", wHATSAPPPHONENUMBERIDS: "1241790819006805,1022274334303691" };
 
 (async () => {
   const req = { method: "GET", url: "https://x/?key=K&format=json&since=2026-06-25&until=2026-06-26", headers: { get: () => null } };

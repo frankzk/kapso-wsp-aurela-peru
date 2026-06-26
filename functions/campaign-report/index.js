@@ -4,6 +4,10 @@
 // por la funcion create-shopify-order) con el gasto publicitario de Meta Marketing
 // API para reportar, por anuncio y por campana: pedidos, ingresos, gasto, CPA y ROAS.
 //
+// Tambien reporta la CONVERSION de WhatsApp: conversaciones nuevas (Kapso API)
+// vs pedidos del bot (Shopify, source=whatsapp-bot), con tasa por dia. La
+// conversion se calcula para rangos cortos (<= MAX_CONV_DAYS dias).
+//
 // Endpoint PUBLICO protegido por access key (expone datos de ventas):
 //   GET /?key=<DASHBOARD_ACCESS_KEY>            -> dashboard HTML
 //   GET /?key=<...>&format=json                 -> mismos datos en JSON
@@ -17,6 +21,9 @@ const DEFAULT_API_VERSION = "2026-04";
 const DEFAULT_META_API_VERSION = "v21.0";
 const MAX_ORDER_PAGES = 12; // 12 x 250 = 3000 ordenes por rango
 const MAX_META_PAGES = 20;
+const MAX_CONV_PAGES = 30; // por numero: 30 x 100 = 3000 conversaciones por rango
+const MAX_CONV_DAYS = 16;  // la conversion se calcula para rangos <= 16 dias (evita timeouts del worker)
+const DEFAULT_PHONE_NUMBER_IDS = ["1241790819006805", "1022274334303691"];
 const DEFAULT_DAYS = 30;
 const LIMA_OFFSET_MS = 5 * 60 * 60 * 1000; // America/Lima = UTC-5 (sin DST)
 
@@ -49,7 +56,8 @@ async function handleRequest(request, env = globalThis) {
     const range = resolveRange(params);
     const sales = await fetchOrderAggregates(config, range);
     const meta = await fetchMetaInsights(config, range);
-    const report = buildReport({ sales, meta, range, config });
+    const conv = await fetchConversationStats(config, range);
+    const report = buildReport({ sales, meta, conv, range, config });
 
     // Modo notificacion: empuja un resumen al Telegram del equipo (para el job diario).
     if (params.notify === "telegram") {
@@ -96,9 +104,30 @@ function getConfig(env = globalThis) {
     metaAdAccountId: normalizeAdAccountId(g("META_AD_ACCOUNT_ID", "mETAADACCOUNTID")),
     metaApiVersion: g("META_API_VERSION", "mETAAPIVERSION") || DEFAULT_META_API_VERSION,
     dashboardKey: g("DASHBOARD_ACCESS_KEY", "dASHBOARDACCESSKEY"),
+    kapsoApiKey: g("KAPSO_API_KEY", "kAPSOAPIKEY"),
+    kapsoApiBase: g("KAPSO_API_BASE", "kAPSOAPIBASE") || "https://api.kapso.ai",
+    phoneNumberIds: parsePhoneIds(g("WHATSAPP_PHONE_NUMBER_IDS", "wHATSAPPPHONENUMBERIDS")),
     telegramToken: g("TELEGRAM_BOT_TOKEN", "tELEGRAMBOTTOKEN"),
     telegramChatId: g("TELEGRAM_CHAT_ID", "tELEGRAMCHATID"),
   };
+}
+
+function parsePhoneIds(value) {
+  if (!value) return DEFAULT_PHONE_NUMBER_IDS;
+  const ids = String(value).split(",").map((s) => s.trim()).filter(Boolean);
+  return ids.length ? ids : DEFAULT_PHONE_NUMBER_IDS;
+}
+
+function limaDay(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return new Date(t - LIMA_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function addDayStr(dateStr) {
+  const dt = new Date(`${dateStr}T00:00:00Z`);
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
 }
 
 function normalizeAdAccountId(value) {
@@ -171,6 +200,9 @@ async function fetchOrderAggregates(config, range) {
   let attributedOrders = 0;
   let totalRevenue = 0;
   let attributedRevenue = 0;
+  let whatsappOrders = 0;
+  let whatsappRevenue = 0;
+  const whatsappOrdersByDay = new Map();
   let truncated = false;
 
   const queryString = `created_at:>='${range.sinceIso}' created_at:<='${range.untilIso}'`;
@@ -201,6 +233,16 @@ async function fetchOrderAggregates(config, range) {
       if (Number.isFinite(amount)) totalRevenue += amount;
 
       const attrs = attributesToMap(order.customAttributes);
+
+      // Pedidos generados por el bot de WhatsApp (create-shopify-order marca source=whatsapp-bot).
+      // Es el numerador de la conversion conversaciones -> pedidos.
+      if (attrs.source === "whatsapp-bot") {
+        whatsappOrders += 1;
+        if (Number.isFinite(amount)) whatsappRevenue += amount;
+        const day = limaDay(order.createdAt);
+        if (day) whatsappOrdersByDay.set(day, (whatsappOrdersByDay.get(day) || 0) + 1);
+      }
+
       const adId = attrs.ctwa_ad_id;
       if (!adId) continue;
 
@@ -234,6 +276,9 @@ async function fetchOrderAggregates(config, range) {
     attributedOrders,
     totalRevenue,
     attributedRevenue,
+    whatsappOrders,
+    whatsappRevenue,
+    whatsappOrdersByDay,
     truncated,
   };
 }
@@ -320,10 +365,68 @@ async function fetchMetaInsights(config, range) {
 }
 
 // ---------------------------------------------------------------------------
+// Kapso: conteo de conversaciones (denominador de la conversion)
+// ---------------------------------------------------------------------------
+
+async function fetchConversationStats(config, range) {
+  const byDay = new Map();
+  if (!config.kapsoApiKey) {
+    return { configured: false, total: 0, byDay, truncated: false, skipped: false, error: null };
+  }
+
+  // Solo para rangos cortos: contar conversaciones paginando puede ser pesado.
+  const spanDays = Math.round((Date.parse(range.untilIso) - Date.parse(range.sinceIso)) / 86400000) + 1;
+  if (spanDays > MAX_CONV_DAYS) {
+    return { configured: true, total: 0, byDay, truncated: false, skipped: true, error: null };
+  }
+
+  const sinceMs = Date.parse(range.sinceIso);
+  const untilMs = Date.parse(range.untilIso);
+  let total = 0;
+  let truncated = false;
+
+  const buildUrl = (phoneId, cursor) => {
+    let u = `${config.kapsoApiBase}/meta/whatsapp/${encodeURIComponent(phoneId)}/conversations`
+      + `?last_active_since=${encodeURIComponent(range.sinceIso)}&last_active_until=${encodeURIComponent(range.untilIso)}&limit=100`;
+    if (cursor) u += `&after=${encodeURIComponent(cursor)}`;
+    return u;
+  };
+
+  try {
+    for (const phoneId of config.phoneNumberIds) {
+      let url = buildUrl(phoneId, null);
+      for (let page = 0; page < MAX_CONV_PAGES && url; page += 1) {
+        const response = await fetch(url, { headers: { "X-API-Key": config.kapsoApiKey, "Content-Type": "application/json" } });
+        if (!response.ok) return { configured: true, total, byDay, truncated, skipped: false, error: `HTTP ${response.status}` };
+        const payload = await response.json();
+        const rows = payload?.data || [];
+        for (const c of rows) {
+          const created = c.created_at || c.createdAt || c.kapso?.created_at;
+          const ts = created ? Date.parse(created) : null;
+          // Cuenta como "nueva en el rango" si su creacion cae dentro. Si no trae
+          // fecha, la contamos igual (esta activa en el rango).
+          if (ts != null && (ts < sinceMs || ts > untilMs)) continue;
+          total += 1;
+          const day = ts != null ? new Date(ts - LIMA_OFFSET_MS).toISOString().slice(0, 10) : range.until;
+          byDay.set(day, (byDay.get(day) || 0) + 1);
+        }
+        const nextCursor = payload?.paging?.cursors?.after || payload?.paging?.next;
+        if (!nextCursor) break;
+        if (page === MAX_CONV_PAGES - 1) { truncated = true; break; }
+        url = buildUrl(phoneId, nextCursor);
+      }
+    }
+    return { configured: true, total, byDay, truncated, skipped: false, error: null };
+  } catch (error) {
+    return { configured: true, total, byDay, truncated, skipped: false, error: safeError(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Construccion del reporte (puro, testeable)
 // ---------------------------------------------------------------------------
 
-function buildReport({ sales, meta, range, config }) {
+function buildReport({ sales, meta, conv, range, config }) {
   const adIds = new Set([...sales.byAd.keys(), ...meta.byAd.keys()]);
   const sameCurrency = !meta.accountCurrency || meta.accountCurrency === sales.currency;
 
@@ -389,7 +492,12 @@ function buildReport({ sales, meta, range, config }) {
     overallRoas: totalSpend > 0 ? round2(sales.attributedRevenue / totalSpend) : null,
   };
 
+  const conversation = buildConversion(conv || { configured: false, byDay: new Map() }, sales, range);
+
   const warnings = [];
+  if (conversation.configured && conversation.error) warnings.push(`No se pudo leer conversaciones de Kapso: ${conversation.error}`);
+  if (conversation.truncated) warnings.push("Conteo de conversaciones parcial (se alcanzo el limite de paginas); acota el rango para mayor exactitud.");
+  if (!conversation.configured) warnings.push("Falta KAPSO_API_KEY en la funcion: no se puede calcular la conversion (conversaciones -> pedidos).");
   if (!meta.configured) warnings.push("Meta Marketing API no esta conectada: se muestran ventas atribuidas, pero sin gasto, CPA ni ROAS. Configura META_ACCESS_TOKEN y META_AD_ACCOUNT_ID para activarlo.");
   if (meta.configured && meta.error) warnings.push(`No se pudo leer Meta Ads: ${meta.error}`);
   if (!sameCurrency) warnings.push(`La moneda de Shopify (${sales.currency}) difiere de la de Meta (${meta.accountCurrency}); CPA y ROAS pueden no ser comparables.`);
@@ -402,10 +510,38 @@ function buildReport({ sales, meta, range, config }) {
     metaCurrency: meta.accountCurrency,
     sameCurrency,
     totals,
+    conversation,
     campaigns,
     ads,
     warnings,
     generatedAt: new Date(Date.now() - LIMA_OFFSET_MS).toISOString().replace("T", " ").slice(0, 16) + " (Lima)",
+  };
+}
+
+// Conversion WhatsApp: conversaciones nuevas en el rango -> pedidos del bot.
+function buildConversion(conv, sales, range) {
+  const days = [];
+  let d = range.since;
+  let guard = 0;
+  while (d <= range.until && guard < 90) {
+    const c = conv.byDay.get(d) || 0;
+    const o = sales.whatsappOrdersByDay ? (sales.whatsappOrdersByDay.get(d) || 0) : 0;
+    days.push({ day: d, conversations: c, orders: o, rate: c > 0 ? round2(o / c) : null });
+    d = addDayStr(d);
+    guard += 1;
+  }
+  const conversations = conv.total || 0;
+  const orders = sales.whatsappOrders || 0;
+  return {
+    configured: Boolean(conv.configured),
+    skipped: Boolean(conv.skipped),
+    truncated: Boolean(conv.truncated),
+    error: conv.error || null,
+    conversations,
+    orders,
+    revenue: round2(sales.whatsappRevenue || 0),
+    rate: conversations > 0 ? round2(orders / conversations) : null,
+    byDay: days,
   };
 }
 
@@ -466,6 +602,29 @@ function renderDashboard(report) {
       </tr>`).join("")
     : `<tr><td colspan="6" class="empty">Sin datos en este rango.</td></tr>`;
 
+  const conv = report.conversation || { configured: false };
+  let conversionSection = "";
+  if (conv.configured && !conv.skipped) {
+    const convCards = [
+      card("Conversaciones", `${conv.conversations}${conv.truncated ? "+" : ""}`, "nuevas en el periodo"),
+      card("Pedidos WhatsApp", `${conv.orders}`, money(conv.revenue, cur)),
+      card("Tasa de conversión", conv.rate != null ? `${Math.round(conv.rate * 100)}%` : "—", "pedidos / conversaciones"),
+    ].join("");
+    const convRows = (conv.byDay || []).map((r) => `
+      <tr><td>${escapeHtml(r.day)}</td><td class="num">${r.conversations}</td><td class="num">${r.orders}</td><td class="num">${r.rate != null ? Math.round(r.rate * 100) + "%" : "—"}</td></tr>`).join("");
+    conversionSection = `
+    <section>
+      <h2>Conversión WhatsApp (conversaciones → pedidos)</h2>
+      <section class="cards">${convCards}</section>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Día</th><th class="num">Conversaciones</th><th class="num">Pedidos WA</th><th class="num">Tasa</th></tr></thead>
+        <tbody>${convRows || `<tr><td colspan="4" class="empty">Sin datos en este rango.</td></tr>`}</tbody>
+      </table></div>
+    </section>`;
+  } else if (conv.skipped) {
+    conversionSection = `<section><h2>Conversión WhatsApp</h2><div class="warn">Disponible para rangos de hasta ${MAX_CONV_DAYS} días. Acota el rango (ej. <a href="?key=__KEY__&days=7">7d</a>) para ver la conversión por día.</div></section>`;
+  }
+
   const body = `
     <header>
       <h1>📊 Ventas por campaña · WhatsApp</h1>
@@ -474,6 +633,7 @@ function renderDashboard(report) {
     </header>
     ${warningsHtml}
     <section class="cards">${cards}</section>
+    ${conversionSection}
     <section>
       <h2>Por campaña</h2>
       <div class="tablewrap"><table>
@@ -626,4 +786,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaCampaignReport = { buildReport, buildTelegramSummary, fetchOrderAggregates, fetchMetaInsights, handleRequest, handler, resolveRange };
+globalThis.__aurelaCampaignReport = { buildReport, buildConversion, buildTelegramSummary, fetchOrderAggregates, fetchMetaInsights, fetchConversationStats, handleRequest, handler, resolveRange };

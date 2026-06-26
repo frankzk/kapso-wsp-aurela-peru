@@ -2,15 +2,15 @@
   "functions": {
     "campaign-report": {
       "files": {
-        "functions/campaign-report/function.yaml": "afc604a5c7f8fabfb88f505d1d776bd9141dd73945c9aac101418cc4d3e2dadb",
-        "functions/campaign-report/index.js": "80bbf7375521065d6ad4209b85a8b185d562911f1c9d86320d0ddbcab87b4c86"
+        "functions/campaign-report/function.yaml": "87f2cfc96927b90d42bcf4b1e10a9f1330f5ddcdcbd47d05f5822bbb9aec4452",
+        "functions/campaign-report/index.js": "3846345352bb718699669126207983baef6c41ce9c49b3a096bbaa21853ce0b1"
       },
       "id": "b9b96196-14f5-4ba0-8bd8-d48b0334d292",
-      "lastDeployedAt": "2026-06-24T11:43:07-04:00",
-      "lockVersion": 11,
+      "lastDeployedAt": "2026-06-26T01:12:14-04:00",
+      "lockVersion": 13,
       "slug": "campaign-report",
       "status": "deployed",
-      "updatedAt": "2026-06-24T11:43:07-04:00"
+      "updatedAt": "2026-06-26T01:12:14-04:00"
     },
     "check-coverage": {
       "files": {

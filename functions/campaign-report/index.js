@@ -42,6 +42,10 @@ async function handleRequest(request, env = globalThis) {
   const wantsJson = params.format === "json" || /application\/json/i.test(request.headers.get("accept") || "");
   const config = getConfig(env);
 
+  // Fallback: permitir pasar la Kapso API key por parametro (kapso_key) cuando el
+  // env del worker no la expone. Solo util para quien ya tiene la dashboard key.
+  if (!config.kapsoApiKey && params.kapso_key) config.kapsoApiKey = String(params.kapso_key);
+
   // Guarda de acceso: si hay key configurada, exigirla. Si no hay key configurada,
   // bloquear por defecto (no exponer ventas por accidente).
   const provided = params.key || request.headers.get("x-dashboard-key") || "";

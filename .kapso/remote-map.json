@@ -14,15 +14,15 @@
     },
     "check-coverage": {
       "files": {
-        "functions/check-coverage/function.yaml": "ac1fd7069d5ebd0442d0bae413e8d6ec43eafed28c57cd19bb2f8cc08e3e416b",
-        "functions/check-coverage/index.js": "3bf64339064f65777b59c2511457cb31393ce059fa872a0dcf971039595986d0"
+        "functions/check-coverage/function.yaml": "3da47f082d8331f539ac7c229180a3d3f6be420058d1f2cc7ef30e82e26c8e37",
+        "functions/check-coverage/index.js": "bb72de5f048020b4b6e0885e6a68d2c3f8c37d426820075f5ef8c41a20efe611"
       },
       "id": "f9ddb618-7f39-4ee3-af23-4d9733ba5d55",
-      "lastDeployedAt": "2026-06-24T16:50:49-04:00",
-      "lockVersion": 36,
+      "lastDeployedAt": "2026-07-01T23:47:15-04:00",
+      "lockVersion": 52,
       "slug": "check-coverage",
       "status": "deployed",
-      "updatedAt": "2026-06-24T16:50:49-04:00"
+      "updatedAt": "2026-07-01T23:47:15-04:00"
     },
     "create-shopify-order": {
       "files": {
@@ -89,22 +89,22 @@
   "workflows": {
     "aurela-sales-bot": {
       "files": {
-        "workflows/aurela-sales-bot/definition.json": "5320042e21125ac97ddf269f341e07f6116c610a7122eedf6bf8d6b15bc6bba1",
-        "workflows/aurela-sales-bot/workflow.yaml": "f9f25b7730394471de76359c3238a5349b7cd05db73bbd0fcebf50cac7cab724"
+        "workflows/aurela-sales-bot/definition.json": "e6e06dfc3754e7329491df7fdf627bd1031c262d213801b6028853f806e471f6",
+        "workflows/aurela-sales-bot/workflow.yaml": "cd12258df2f8d7eb5ddc4470726662e9fbe364781bc854b9eecdaed225cdf62b"
       },
       "generatedSource": {
-        "hash": "1363e5b05e722dde089440f4757a42477d88cf5ce4d25dc8ecd8be743d0bbf60",
+        "hash": "9390438987e65f714abb3895cdc32f245b4fc865bd719a1539824bbfdc31ffca",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 360,
+      "lockVersion": 784,
       "slug": "aurela-sales-bot",
       "sourceFile": {
-        "hash": "4c4caf0be4686b01782ee5291ef534eb5fc6ba7f19959c173725ab7249387f9d",
+        "hash": "4ce2cf2494cc224bad2f0fcae878abd9a033032f2275aa4a7e9d9ac4092b55ab",
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "status": "active",
-      "updatedAt": "2026-06-26T00:22:49-04:00"
+      "updatedAt": "2026-07-01T23:47:21-04:00"
     }
   }
 }

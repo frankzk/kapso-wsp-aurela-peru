@@ -25,6 +25,9 @@ const CASH_ON_DELIVERY = {
   piura: ["piura", "castilla", "catacaos", "26 de octubre", "sullana", "talara"],
   puno: ["juliaca"],
   cajamarca: ["cajamarca", "banos del inca", "los banos del inca"],
+  // Solo Cusco ciudad (distrito cusco / provincia cusco). Otros distritos de la
+  // region (Wanchaq, San Sebastian, etc.) requieren validacion antes de agregarse.
+  cusco: ["cusco"],
 };
 
 // Distritos no ambiguos donde podemos inferir provincia/region si el agente
@@ -73,6 +76,7 @@ const SAFE_DISTRICT_LOCATION_INFERENCE = {
   cajamarca: { province: "cajamarca", region: "cajamarca" },
   "banos del inca": { province: "cajamarca", region: "cajamarca" },
   "los banos del inca": { province: "cajamarca", region: "cajamarca" },
+  cusco: { province: "cusco", region: "cusco" },
 };
 
 // Los 43 distritos de Lima Metropolitana tienen contraentrega. El cliente

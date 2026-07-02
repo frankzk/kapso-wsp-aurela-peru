@@ -108,6 +108,8 @@ async function coverageMode(input) {
     [{ district: "banos del inca", province: "cajamarca" }, "Cajamarca: Banos del Inca"],
     [{ district: "cajamarca" }, "Cajamarca ciudad suelta"],
     [{ district: "chiclayo", province: "chiclayo", region: "lambayeque" }, "Chiclayo completo"],
+    [{ district: "cusco", province: "cusco", region: "cusco" }, "Cusco/Cusco/Cusco (ciudad)"],
+    [{ district: "cusco" }, "Cusco ciudad suelta"],
   ];
   for (const [input, label] of COD_CASES) {
     check(`contraentrega: ${label}`, (await coverageMode(input)) === "contraentrega");
@@ -115,7 +117,8 @@ async function coverageMode(input) {
 
   const AGENCIA_CASES = [
     [{ district: "tayabamba", province: "pataz", region: "la libertad" }, "Tayabamba (remoto) sigue agencia"],
-    [{ district: "cusco", province: "cusco", region: "cusco" }, "Cusco sigue agencia (cobertura no confirmada)"],
+    [{ district: "wanchaq", province: "cusco", region: "cusco" }, "otro distrito de Cusco region sigue agencia (sin validar)"],
+    [{ district: "sicuani", province: "canchis", region: "cusco" }, "Sicuani (Cusco region) sigue agencia"],
     [{ district: "trujillo", courier: "shalom" }, "courier explicito Shalom gana aun con cobertura"],
   ];
   for (const [input, label] of AGENCIA_CASES) {

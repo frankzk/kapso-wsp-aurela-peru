@@ -196,14 +196,23 @@ if (typeof addEventListener === "function") {
   });
 }
 
-async function handleRequest(request) {
+async function handleRequest(request, env = globalThis) {
   const payload = await readJson(request);
+
+  // Debug/mantenimiento del watchdog (invocacion directa con X-API-Key).
+  if (payload.watchdogDebug || payload.watchdogSeed || payload.forceSweep) {
+    return watchdogAdmin(payload, env);
+  }
 
   // Follow-up ladder routing: when invoked by a Decide node, the payload carries
   // `available_edges`. Coverage tool calls never include it, so this branch is
   // inert for the normal coverage flow.
   if (Array.isArray(payload.available_edges)) {
-    return routeFollowup(payload);
+    // El ladder invoca esto constantemente: aprovechamos para correr el watchdog
+    // de clientes sin respuesta (compuerta KV: max 1 barrido cada 10 min).
+    const routed = routeFollowup(payload);
+    try { await maybeRunWatchdog(env); } catch { /* nunca romper el ruteo */ }
+    return routed;
   }
 
   const input = unwrapInput(payload);
@@ -633,7 +642,192 @@ function json(body, status = 200) {
   });
 }
 
+// ============================================================================
+// Watchdog de clientes sin respuesta
+// Detecta conversaciones donde el CLIENTE hablo ultimo y el bot lleva >15 min
+// en silencio (agente colgado, error, etc.) y alerta al equipo por Telegram.
+// Se dispara aprovechando que el ladder de seguimientos invoca esta funcion
+// constantemente; una compuerta en KV limita el barrido a 1 vez cada 10 min.
+// Credenciales: env/globalThis (runtime_config) con fallback a KV del proyecto.
+// ============================================================================
+
+const WATCHDOG_SWEEP_INTERVAL_MS = 10 * 60 * 1000;   // min entre barridos
+const WATCHDOG_MIN_SILENCE_MS = 15 * 60 * 1000;      // cliente esperando >15 min
+const WATCHDOG_MAX_SILENCE_MS = 6 * 60 * 60 * 1000;  // ignorar silencios >6h (viejos)
+const WATCHDOG_ALERT_TTL_S = 6 * 60 * 60;            // no re-alertar la misma conversacion por 6h
+const WATCHDOG_PHONE_IDS = ["1241790819006805", "1022274334303691"];
+const WATCHDOG_MAX_ALERTS = 6;
+
+// Mensajes de cierre triviales del cliente que NO requieren respuesta del bot:
+// si TODAS las palabras del mensaje estan en esta lista, no se alerta
+// ("ok gracias", "no srta gracias", "ya listo", "buenas noches", etc.).
+const WATCHDOG_TRIVIAL_WORDS = new Set([
+  "ok", "okey", "oki", "okis", "ya", "listo", "lista", "gracias", "gracias",
+  "muchas", "mil", "si", "no", "buenas", "buenos", "noches", "dias", "dia",
+  "buen", "buena", "tardes", "de", "nada", "senorita", "srta", "joven", "esta",
+  "bien", "vale", "perfecto", "entendido", "amable", "muy",
+]);
+
+function watchdogIsTrivial(text) {
+  const clean = String(text || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z\s]/g, " ")
+    .trim();
+  if (!clean) return true; // solo emojis/signos: no necesita rescate
+  const words = clean.split(/\s+/);
+  return words.every((w) => WATCHDOG_TRIVIAL_WORDS.has(w));
+}
+
+async function watchdogConfig(env) {
+  const g = (a, b) => env?.[a] || env?.[b] || globalThis[a] || globalThis[b];
+  const cfg = {
+    kapsoApiKey: g("KAPSO_API_KEY", "kAPSOAPIKEY"),
+    kapsoApiBase: g("KAPSO_API_BASE", "kAPSOAPIBASE") || "https://api.kapso.ai",
+    telegramToken: g("TELEGRAM_BOT_TOKEN", "tELEGRAMBOTTOKEN"),
+    telegramChatId: g("TELEGRAM_CHAT_ID", "tELEGRAMCHATID"),
+  };
+  // Fallback a KV del proyecto (mismo patron que create-shopify-order).
+  if (env?.KV && (!cfg.kapsoApiKey || !cfg.telegramToken || !cfg.telegramChatId)) {
+    try {
+      const [k, t, c] = await Promise.all([
+        cfg.kapsoApiKey ? null : env.KV.get("KAPSO_API_KEY"),
+        cfg.telegramToken ? null : env.KV.get("TELEGRAM_BOT_TOKEN"),
+        cfg.telegramChatId ? null : env.KV.get("TELEGRAM_CHAT_ID"),
+      ]);
+      cfg.kapsoApiKey = cfg.kapsoApiKey || k;
+      cfg.telegramToken = cfg.telegramToken || t;
+      cfg.telegramChatId = cfg.telegramChatId || c;
+    } catch { /* sin KV: seguimos con lo que haya */ }
+  }
+  return cfg;
+}
+
+async function maybeRunWatchdog(env, { force = false } = {}) {
+  if (!env?.KV) return { ran: false, reason: "no_kv" };
+  if (!force && isQuietHourPeru()) return { ran: false, reason: "quiet_hours" };
+
+  const now = Date.now();
+  if (!force) {
+    const last = Number(await env.KV.get("watchdog:last_sweep") || 0);
+    if (now - last < WATCHDOG_SWEEP_INTERVAL_MS) return { ran: false, reason: "gated" };
+  }
+  // Cerrar la compuerta ANTES de barrer para evitar dobles barridos concurrentes.
+  await env.KV.put("watchdog:last_sweep", String(now), { expirationTtl: 3600 });
+
+  const cfg = await watchdogConfig(env);
+  if (!cfg.kapsoApiKey || !cfg.telegramToken || !cfg.telegramChatId) {
+    return { ran: false, reason: "missing_credentials" };
+  }
+  return watchdogSweep(cfg, env, now);
+}
+
+async function watchdogSweep(cfg, env, now) {
+  const sinceIso = new Date(now - WATCHDOG_MAX_SILENCE_MS).toISOString();
+  const candidates = [];
+
+  for (const phoneId of WATCHDOG_PHONE_IDS) {
+    let cursor = null;
+    for (let page = 0; page < 3; page += 1) {
+      let url = `${cfg.kapsoApiBase}/platform/v1/whatsapp/conversations`
+        + `?phone_number_id=${encodeURIComponent(phoneId)}&status=active`
+        + `&last_active_after=${encodeURIComponent(sinceIso)}&limit=100`;
+      if (cursor) url += `&after=${encodeURIComponent(cursor)}`;
+      let payload;
+      try {
+        const res = await fetch(url, { headers: { "X-API-Key": cfg.kapsoApiKey } });
+        if (!res.ok) break;
+        payload = await res.json();
+      } catch { break; }
+
+      for (const convo of payload?.data || []) {
+        const k = convo.kapso || {};
+        const lastIn = Date.parse(k.last_inbound_at || "");
+        const lastOut = Date.parse(k.last_outbound_at || "");
+        if (!Number.isFinite(lastIn)) continue;
+        if (Number.isFinite(lastOut) && lastOut >= lastIn) continue; // el bot ya respondio
+        const silence = now - lastIn;
+        if (silence < WATCHDOG_MIN_SILENCE_MS || silence > WATCHDOG_MAX_SILENCE_MS) continue;
+
+        const text = String(k.last_message_text || "").trim();
+        if (/^Reacted with /i.test(text)) continue;          // reaccion de emoji
+        if (watchdogIsTrivial(text)) continue;               // "ok gracias" no necesita rescate
+
+        candidates.push({
+          id: convo.id,
+          name: k.contact_name || convo.phone_number || "?",
+          phone: convo.phone_number || "",
+          minutes: Math.round(silence / 60000),
+          text: text.slice(0, 80),
+        });
+      }
+      cursor = payload?.paging?.cursors?.after || null;
+      if (!cursor || !(payload?.data || []).length) break;
+    }
+  }
+
+  // Dedupe: alertar cada conversacion una sola vez por ventana de 6h.
+  const fresh = [];
+  for (const c of candidates) {
+    const key = `watchdog:alerted:${c.id}`;
+    if (await env.KV.get(key)) continue;
+    fresh.push(c);
+    await env.KV.put(key, "1", { expirationTtl: WATCHDOG_ALERT_TTL_S });
+    if (fresh.length >= WATCHDOG_MAX_ALERTS) break;
+  }
+
+  if (fresh.length === 0) return { ran: true, candidates: candidates.length, alerted: 0 };
+
+  const lines = fresh.map((c) => `• *${c.name}* (+${c.phone}) — ${c.minutes} min esperando\n  _"${c.text}"_`);
+  const text = `⚠️ *Clientes esperando respuesta* (bot en silencio >15 min)\n\n${lines.join("\n")}\n\nEntra a Kapso para atenderlos.`;
+  try {
+    await fetch(`https://api.telegram.org/bot${cfg.telegramToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: cfg.telegramChatId, text, parse_mode: "Markdown" }),
+    });
+  } catch { /* Telegram caido: el dedupe TTL hara que se reintente luego */ }
+
+  return { ran: true, candidates: candidates.length, alerted: fresh.length };
+}
+
+// Administracion por invocacion directa (privada, requiere X-API-Key de Kapso):
+// - watchdogSeed: {watchdogSeed:{KAPSO_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID}} guarda en KV.
+// - watchdogDebug: reporta que credenciales estan visibles (booleans, sin valores).
+// - forceSweep: corre un barrido ignorando compuerta y horario (para probar).
+async function watchdogAdmin(payload, env) {
+  if (payload.watchdogSeed && typeof payload.watchdogSeed === "object") {
+    if (!env?.KV) return json({ ok: false, reason: "no_kv" });
+    const allowed = ["KAPSO_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"];
+    const saved = [];
+    for (const key of allowed) {
+      const value = payload.watchdogSeed[key];
+      if (typeof value === "string" && value.trim()) {
+        await env.KV.put(key, value.trim());
+        saved.push(key);
+      }
+    }
+    return json({ ok: true, seeded: saved });
+  }
+  if (payload.forceSweep) {
+    const result = await maybeRunWatchdog(env, { force: true });
+    return json({ ok: true, ...result });
+  }
+  const cfg = await watchdogConfig(env);
+  return json({
+    ok: true,
+    kv: Boolean(env?.KV),
+    kapsoApiKey: Boolean(cfg.kapsoApiKey),
+    telegramToken: Boolean(cfg.telegramToken),
+    telegramChatId: Boolean(cfg.telegramChatId),
+    quietHours: isQuietHourPeru(),
+  });
+}
+
 globalThis.__aurelaCheckCoverage = {
+  maybeRunWatchdog,
+  watchdogSweep,
+  watchdogConfig,
   cleanDistrictText,
   detectCourier,
   detectLocationInconsistency,

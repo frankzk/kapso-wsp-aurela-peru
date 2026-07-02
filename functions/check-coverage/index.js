@@ -18,6 +18,7 @@ const CASH_ON_DELIVERY = {
   "la libertad": ["trujillo", "el porvenir", "la esperanza", "huanchaco", "moche", "victor larco herrera"],
   lambayeque: ["chiclayo", "jose leonardo ortiz", "la victoria", "lambayeque", "pimentel"],
   piura: ["piura", "castilla", "catacaos", "26 de octubre", "sullana", "talara"],
+  cajamarca: ["cajamarca", "banos del inca", "los banos del inca"],
 };
 
 // Los 43 distritos de Lima Metropolitana tienen contraentrega. El cliente
@@ -111,6 +112,9 @@ const DISTRICT_LOCATION_HINTS = {
   chiclayo: { province: "chiclayo", region: "lambayeque" },
   piura: { province: "piura", region: "piura" },
   castilla: { province: "piura", region: "piura" },
+  cajamarca: { province: "cajamarca", region: "cajamarca" },
+  "banos del inca": { province: "cajamarca", region: "cajamarca" },
+  "los banos del inca": { province: "cajamarca", region: "cajamarca" },
 };
 
 async function handler(request, env = globalThis) {
@@ -142,7 +146,9 @@ async function handleRequest(request) {
 
   const shippingText = [address, input.shippingMethod, input.metodoEnvio, input.courier, input.agency, shalomAgency].join(" ");
   const selectedCourier = detectCourier(shippingText);
-  const agencyRequested = Boolean(selectedCourier) || /(agencia|oficina)/i.test(shippingText);
+  // Solo un courier EXPLICITO (Shalom/Olva) desvia a agencia. Mencionar
+  // "agencia"/"oficina" NO bloquea la contraentrega: un cliente preguntando
+  // "¿tienes oficina en Trujillo?" debe recibir contraentrega si su zona la tiene.
   const locationIssue = detectLocationInconsistency({ region, province, district });
   if (locationIssue) {
     return json({
@@ -158,7 +164,7 @@ async function handleRequest(request) {
 
   const cod = hasCashOnDelivery({ region, province, district });
 
-  if (cod && !agencyRequested) {
+  if (cod && !selectedCourier) {
     const isLimaMetro = region === "lima" || province === "lima" || region === "callao"
       || province === "callao" || isLimaMetroDistrict(district) || isCallaoDistrict(district);
     return json({
@@ -192,8 +198,8 @@ async function handleRequest(request) {
       shouldCreateOrder: false,
       normalized: { district, province, region },
       message: shalomAgency
-        ? `Listo, lo enviamos a la agencia Shalom: ${shalomAgency}.\nPara separarlo, realiza el adelanto de S/30 al Yape:\nGrupo GF SAC\n📱 930 555 309\nEl saldo lo pagas al recoger.\nTambién necesito el DNI del titular que recogerá.\nEnvíame el voucher o captura para pasarlo a validación logística ✅`
-        : "Perfecto 🙌\nSí podemos enviarlo por Shalom. Para dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nLuego te paso el Yape para el adelanto de S/30 y con el voucher lo pasamos a validación ✅",
+        ? `Listo, lo enviamos a la agencia Shalom: ${shalomAgency}.\nPara separar tu pedido solo se hace un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger).\nYape: Grupo GF SAC (razón social de Aurela)\n📱 930 555 309\nTambién necesito el DNI del titular que recogerá.\nApenas me envíes el voucher, te confirmo el despacho con tu código de seguimiento Shalom ✅`
+        : "Perfecto 🙌\nSí podemos enviarlo por Shalom. Para dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅",
     });
   }
 
@@ -231,7 +237,7 @@ async function handleRequest(request) {
     requiresShalomAgency: true,
     nextAction: "ask_shalom_agency",
     normalized: { district, province, region },
-    message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nLuego te paso el Yape para el adelanto de S/30 y con el voucher lo pasamos a validación ✅",
+    message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅",
   });
 }
 
@@ -347,6 +353,16 @@ function hasCashOnDelivery({ region, province, district }) {
     if (!coveredDistricts) continue;
     if (coveredDistricts.includes("*")) return true;
     if (district && coveredDistricts.includes(district)) return true;
+  }
+
+  // El cliente dio solo la ciudad ("Chiclayo", "Trujillo", "Arequipa"), como
+  // distrito o como provincia, sin la region. Inferimos provincia/region con
+  // DISTRICT_LOCATION_HINTS para no mandar a agencia una zona con contraentrega.
+  for (const name of [district, province].filter(Boolean)) {
+    const hint = DISTRICT_LOCATION_HINTS[name];
+    if (!hint) continue;
+    const covered = CASH_ON_DELIVERY[hint.region] || CASH_ON_DELIVERY[hint.province];
+    if (covered && (covered.includes("*") || covered.includes(name))) return true;
   }
 
   return false;

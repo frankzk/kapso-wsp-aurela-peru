@@ -335,6 +335,11 @@ Pedidos al por mayor (10 unidades o mas del mismo producto):
 - REGLA DURA: una vez dada una cifra, NUNCA re-cotices por encima. Si dudas del calculo, verifica con quote_order ANTES de responder.
 - Trata al mayorista como cliente prioritario: confirma stock del volumen con shopify_product_lookup, pregunta si necesita factura (toma razon social, RUC y direccion fiscal), y llama notify_team con reason="PEDIDO MAYORISTA" + producto + cantidad + total cotizado para que el equipo coordine entrega y comprobante. Luego sigue el flujo normal de datos de envio.
 
+Descuento 10% del seguimiento (UNICO descuento que puedes aplicar):
+- El 6to recordatorio automatico ofrece 10% de descuento en 1 sola unidad. Si el cliente lo acepta (responde "10%", "el descuento", "acepto el 10" o similar), aplica precio unitario x 0.9 y dilo claro (ej. S/99 -> *S/ 89.10*). Sigue el flujo normal de cierre.
+- Al crear la orden pasa en quote el campo extraDiscountTotal = el 10% del precio unitario (ej. 9.90) para que la orden salga con el descuento aplicado.
+- Reglas: SOLO para 1 unidad; NO se combina con 3x2/5x3 ni con mayorista; NO lo ofrezcas tu por iniciativa propia (solo lo honras cuando el recordatorio lo ofrecio); no existe ningun otro descuento.
+
 Manejo de objeciones y cierre (sin inventar descuentos ni datos):
 - Cierre parcial SIEMPRE: si el cliente ya acepto un producto y luego pide otro que se complica (sin stock, sin el color, indecision), PRIMERO asegura lo aceptado ("te confirmo ya tus [producto aceptado] y lo otro lo vemos aparte, ¿si?") y despues sigue con el segundo. NUNCA dejes caer una venta aceptada por perseguir un agregado.
 - "Lo consulto con mi amiga/esposo/familiar" o "compramos juntas": responde con la promo como palanca social ANTES de aceptar la espera: "¡Mejor aun! Si piden juntas aprovechan el *3x2*: pagan 2 y se llevan 3 (*S/ [precio x 2]* entre las dos). ¿Les aparto las 3?". Si aun asi dice que mañana, respeta el plazo y guarda un followup_hint que lo mencione.
@@ -360,6 +365,7 @@ Deriva a humano si:
 
 Seguimientos automaticos (los gestiona el workflow, NO tu con tiempos):
 - OBLIGATORIO: cada vez que terminas tu turno esperando una respuesta del cliente DEBES guardar stage + followup_hint y llamar complete_task. Aplica SIEMPRE, en especial tras presentar un producto (Msg 3), tras pedir distrito/datos, y tras responder una duda. Si no llamas complete_task, NO se disparan los recordatorios y el lead se pierde en silencio (hoy esa es la fuga #1: clientes que ven el precio, no responden y nadie los reengancha). El sistema enviara seguimientos automaticos si el cliente no responde (~20min, 1h, 4h, 12h y 24h) y te devolvera el control apenas el cliente escriba. No anuncies al cliente que le haras seguimiento ni menciones tiempos.
+- Ademas, cada vez que presentes un producto concreto, guarda con save_variable last_product_title (titulo real) y last_product_handle (handle real de shopify_product_lookup): los usa el recordatorio automatico que re-envia la foto del producto.
 - Antes de llamar complete_task, SIEMPRE guarda dos variables con save_variable:
   • stage: la etapa actual, usando uno de estos valores exactos: explorando, producto_mostrado, esperando_variante, datos_envio, esperando_confirmacion, esperando_voucher, orden_creada, no_interesado, reclamo.
   • followup_hint: un recordatorio corto, calido y especifico de la etapa, SIN links, en minuscula inicial para que calce dentro de una frase. Debe RE-VENDER suave y bajar el riesgo (no solo recordar el dato): cuando aplique, recuerda "pagas al recibir" y "envio gratis". Ejemplos:
@@ -776,21 +782,31 @@ workflow.addEdge("init-hint", "sales-agent");
 const PHONE_NUMBER_ID = "1241790819006805";
 const HOLD_SECONDS = 1800; // re-chequeo cada 30 min durante horario de silencio
 
+// Escalera de valor (7 toques): cada recordatorio aporta un angulo NUEVO en vez
+// de repetir el mismo texto. El ultimo entra a las 23h, ANTES de que cierre la
+// ventana de servicio de 24h de WhatsApp.
 const FOLLOWUPS = [
-  { step: 1, wait: 1200 },  // 20 min
-  { step: 2, wait: 2400 },  // +40 min -> 1 h
-  { step: 3, wait: 10800 }, // +3 h    -> 4 h
-  { step: 4, wait: 28800 }, // +8 h    -> 12 h
-  { step: 5, wait: 43200 }, // +12 h   -> 24 h
+  { step: 1, wait: 1200 },  // 20 min  - quitar friccion (duda)
+  { step: 2, wait: 2400 },  // +40 min -> 1 h   - nota de voz (o texto)
+  { step: 3, wait: 10800 }, // +3 h    -> 4 h   - prueba social / stock
+  { step: 4, wait: 14400 }, // +4 h    -> 8 h   - promo 3x2 como oferta puntual
+  { step: 5, wait: 14400 }, // +4 h    -> 12 h  - re-enviar FOTO del producto
+  { step: 6, wait: 14400 }, // +4 h    -> 16 h  - 10% dcto en 1 unidad (probar sin riesgo)
+  { step: 7, wait: 25200 }, // +7 h    -> 23 h  - cierre elegante + link del catalogo
 ];
 
 const FOLLOWUP_MESSAGES = {
-  1: "Hola 👋 {{vars.followup_hint}} ¿Lo retomamos? 😊",
+  1: "Hola 👋 {{vars.followup_hint}} ¿Te quedo alguna duda? Te respondo al toque 😊",
   2: "Sigo por aca para ayudarte 🙌 {{vars.followup_hint}} ¿Avanzamos con tu pedido?",
-  3: "{{vars.followup_hint}} 😊 Si quieres lo dejamos listo hoy, ¿te ayudo a cerrarlo?",
-  4: "Te recuerdo que {{vars.followup_hint}} Las promos siguen disponibles, ¿lo cerramos?",
-  5: "Ultimo recordatorio 🙏 {{vars.followup_hint}} Si prefieres lo vemos en otro momento, aqui estare.",
+  3: "{{vars.followup_hint}} 🔥 Es de lo mas pedido de la semana y el stock va volando. ¿Te aparto el tuyo?",
+  4: "Te recuerdo que {{vars.followup_hint}} Con el *3x2* pagas 2 y llevas 3 🛍️ Si confirmas hoy, entra al despacho de mañana 🚚",
+  5: "Te lo dejo de nuevo por aqui para que lo veas 😍 {{vars.followup_hint}}",
+  6: "¿Y si lo pruebas sin riesgo? 😊 Te doy *10% de descuento* llevando 1 unidad hoy, para que pruebes la experiencia Aurela. O si prefieres mas ahorro, el *3x2* sigue en pie. Responde *10%* o *3x2* y te lo dejo listo ✨",
+  7: "Ultimo mensajito, prometido 🙏 {{vars.followup_hint}} Te lo dejo apartado al precio de hoy. Y para cuando quieras ver mas modelos con calma, aqui tienes nuestro catalogo: https://aurela.pe/collections/todos-los-productos 😊",
 };
+
+// Paso que RE-ENVIA la foto del producto (via mini-agente, igual que el audio).
+const PHOTO_STEPS = new Set([5]);
 
 // Seguimientos con nota de voz (2do y 3ro). El audio se envia DESPUES del texto
 // corto, via un mini-nodo agente que llama send_media (unico camino soportado:
@@ -830,6 +846,56 @@ function audioAgentConfig(audioUrl) {
       message_delivery_mode: "auto_send_assistant_text",
       enabled_default_tools: ["send_media", "complete_task"],
       flow_agent_function_tools: [],
+      flow_agent_app_integration_tools: [],
+      flow_agent_webhooks: [],
+      flow_agent_knowledge_bases: [],
+      flow_agent_mcp_servers: [],
+      flow_agent_resources: [],
+    },
+    nodeType: "agent",
+    type: "raw",
+  };
+}
+
+// Mini-agente que re-envia UNA foto del producto pendiente (paso 5 del ladder).
+// Lee last_product_handle/last_product_title (guardados por el sales-agent),
+// busca la foto con product_media_lookup y la envia con send_media. Si no hay
+// producto guardado o no hay foto, termina sin enviar nada.
+function photoAgentConfig() {
+  return {
+    config: {
+      system_prompt:
+        "Eres un paso automatico de re-envio de UNA foto de producto en un recordatorio de WhatsApp. Pasos exactos: " +
+        "1) Llama get_variable con name=last_product_handle y luego get_variable con name=last_product_title. " +
+        "2) Si ambos estan vacios o no existen, llama complete_task de inmediato SIN enviar nada. " +
+        "3) Si hay handle o titulo, llama product_media_lookup pasando handle y/o product con esos valores y limit=1. " +
+        "4) Si devuelve media con al menos un item, envia SOLO la primera imagen con send_media (archivo = mediaUrl/url, caption = el titulo del producto). " +
+        "5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una foto. " +
+        "6) Al final llama complete_task siempre.",
+      provider_model_id: "de8992a1-6f21-4a30-9d37-f8645f66e14e",
+      provider_model_name: "gpt-4.1",
+      temperature: 0,
+      max_iterations: 6,
+      max_tokens: 1024,
+      message_delivery_mode: "auto_send_assistant_text",
+      enabled_default_tools: ["send_media", "get_variable", "complete_task"],
+      flow_agent_function_tools: [
+        {
+          name: "product_media_lookup",
+          description: "Find real Shopify product photos by handle or title. Returns media items with mediaUrl to send via send_media.",
+          function_name: "Product Media Lookup",
+          input_schema: {
+            type: "object",
+            properties: {
+              handle: { type: "string", description: "Shopify product handle." },
+              product: { type: "string", description: "Product title." },
+              limit: { type: "number", description: "Max images, use 1." },
+            },
+            additionalProperties: true,
+          },
+          function_slug: "product-media-lookup",
+        },
+      ],
       flow_agent_app_integration_tools: [],
       flow_agent_webhooks: [],
       flow_agent_knowledge_bases: [],
@@ -914,7 +980,8 @@ for (const { step, wait } of FOLLOWUPS) {
   // ¿Este escalon manda nota de voz? Solo si esta en AUDIO_STEPS y la URL existe.
   const audioUrl = AUDIO_STEPS.has(step) ? (FOLLOWUP_AUDIO[step] || "") : "";
   const useAudio = Boolean(audioUrl);
-  const next = step < 5 ? `fu-w${step + 1}` : "fu-lost";
+  const usePhoto = PHOTO_STEPS.has(step);
+  const next = step < FOLLOWUPS.length ? `fu-w${step + 1}` : "fu-lost";
 
   // Envio del seguimiento (texto). Con audio usa el texto corto que lo acompana.
   workflow.addNode(s, {
@@ -929,6 +996,12 @@ for (const { step, wait } of FOLLOWUPS) {
     workflow.addNode(a, audioAgentConfig(audioUrl), { position: { x: baseX, y: 660 }, displayName: `Audio ${step}` });
     workflow.addEdge(s, a);
     workflow.addEdge(a, next);
+  } else if (usePhoto) {
+    // texto -> foto del producto (mini-agente product_media_lookup + send_media).
+    const p = `fu-p${step}`;
+    workflow.addNode(p, photoAgentConfig(), { position: { x: baseX, y: 660 }, displayName: `Foto ${step}` });
+    workflow.addEdge(s, p);
+    workflow.addEdge(p, next);
   } else {
     workflow.addEdge(s, next);
   }

@@ -237,6 +237,20 @@ async function buildOrderInput(config, input) {
     shippingFee = computed.shippingFee;
   }
 
+  // Descuento extra autorizado (ej. el 10% del follow-up de recuperacion en 1
+  // unidad). Se SUMA al descuento de promos, con tope de seguridad del 15% del
+  // subtotal para que un error del agente no regale la orden.
+  const extraDiscount = Number(quote.extraDiscountTotal ?? quote.extra_discount_total ?? 0);
+  if (Number.isFinite(extraDiscount) && extraDiscount > 0) {
+    const cap = computed ? money(computed.subtotalBeforeDiscount * 0.15) : money(extraDiscount);
+    const applied = money(Math.min(extraDiscount, cap));
+    discountTotal = money(discountTotal + applied);
+    if (computed) {
+      const paidAfter = money(computed.subtotalBeforeDiscount - discountTotal);
+      shippingFee = paidAfter > FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE_UNDER_THRESHOLD;
+    }
+  }
+
   const order = {
     lineItems: lineItems.map((item) => ({
       variantId: item.variantId,
@@ -447,7 +461,7 @@ async function computePricing(config, lineItems) {
   discountTotal = money(discountTotal);
   const subtotalAfterDiscount = money(money(subtotalBeforeDiscount) - discountTotal);
   const shippingFee = subtotalAfterDiscount > FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE_UNDER_THRESHOLD;
-  return { discountTotal, shippingFee, subtotalAfterDiscount };
+  return { discountTotal, shippingFee, subtotalAfterDiscount, subtotalBeforeDiscount: money(subtotalBeforeDiscount) };
 }
 
 // Unidades gratis por promo: 5x3 (2 gratis por cada 5) + 3x2 (1 gratis si el resto >=3).

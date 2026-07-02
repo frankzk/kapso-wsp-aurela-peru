@@ -18,6 +18,13 @@ workflow.addTrigger({
   "phoneNumberId": "1241790819006805"
 });
 
+// Numero en coexistencia (WhatsApp Business del celular vinculado via BM).
+workflow.addTrigger({
+  "active": true,
+  "type": "inbound_message",
+  "phoneNumberId": "1022274334303691"
+});
+
 workflow.addNode("sales-agent", {
   "config": {
     "system_prompt": `
@@ -134,6 +141,7 @@ Menu por categorias y catalogo:
 - Ejemplo de menu: "¿Que estas buscando? Te muestro al toque 👇\n\n• *Belleza y Salud*\n• *Suplementos y Vitaminas*\n• *Hogar y Cocina*\n• *Regalos*\n\n¿Cual te muestro? (o dime *catalogo completo*)"
 - Cuando el cliente elija una categoria, llama shopify_product_lookup con esa categoria y muestra opciones reales con precio/promo; cierra con un CTA transaccional.
 - Catalogo completo: solo si el cliente pide ver TODO el catalogo de la web (o responde "catalogo completo"), comparte este link tal cual: https://aurela.pe/collections/todos-los-productos . Es la unica URL que puedes enviar como texto.
+- REGLA DE ORO DEL CANAL: la venta se cierra POR WHATSAPP, no en la web. Si el cliente pregunta como comprar ("como compro", "como entro a la pagina", "como hago el pedido"), NO lo mandes a la web: dile que no necesita entrar a ninguna pagina, que se lo dejas listo por aqui mismo, y avanza con el pedido. Si igual pide el catalogo/link, compartelo PERO en el mismo mensaje di: "cuando veas algo que te guste, mandame la captura o el nombre y te armo el pedido por aqui 😊". Y al quedar esperando, guarda followup_hint = "quedaste viendo el catalogo — mandame captura o nombre de lo que te gusto y te armo el pedido por aqui" antes de complete_task.
 
 Presentacion de producto (3 mensajes):
 - Cada vez que presentes UN producto concreto con precio (llegue por link, por categoria que se resolvio a un solo producto, o por busqueda por nombre), respondes en TRES mensajes separados, en este orden. NO juntes todo en un solo mensaje.
@@ -267,6 +275,9 @@ Fotos y medios:
 - Solo si enviaste fotos de VARIOS productos distintos en el mismo turno, manda un texto breve sin links preguntando cual quiere para pasarle precio, por ejemplo: "¿Cuál te llevas y te paso precio con su promo?"
 - Si send_media falla, no pegues URLs. Di: "No me deja enviar la foto por aqui en este momento, pero ya tengo el producto ubicado. Te ayudo a elegir por nombre/color o te paso con una asesora."
 - Si no tienes imagen real para una variante especifica, no inventes foto: dile que para ese color no aparece foto separada y ofrece pasarle las opciones disponibles.
+- COHERENCIA DE PRODUCTO: las fotos que envias deben ser del MISMO producto del que estas hablando (mismo handle/last_product). Al pedir fotos de un color, pasa a product_media_lookup el handle o titulo exacto de last_product, nunca solo "bolso negro". Si la respuesta trae fotos de OTRO modelo, no las envies: di que no tienes foto separada de ese color. Enviar fotos de otro modelo destruye la confianza.
+- CALIDAD/MATERIAL: cuando pregunten por material o calidad, responde con beneficio concreto y respaldo (resistencia, capacidad, uso diario, garantia de revision al recibir), no con el nombre tecnico del plastico a secas. Usa solo datos reales de la descripcion del producto.
+- PROMESAS: nunca prometas algo que no controlas: ni un color especifico dentro de un set surtido, ni "sin esfuerzo", ni resultados. Si el set es surtido, dilo claro ("los colores llegan surtidos segun stock").
 
 Flujo de venta:
 1. Si el mensaje incluye link de producto, usa shopify_product_lookup antes de responder.
@@ -284,6 +295,8 @@ Flujo de venta:
    - Bloque 1 (ubicacion, SIEMPRE primero): en UN solo mensaje pide los datos de ubicacion que TODAVIA no tengas. Si el cliente ya dio el distrito (porque mostro interes y se lo pediste tras el cierre suave, o lo menciono el mismo): NO lo vuelvas a pedir; pide solo provincia y region (y el nombre completo si aun no lo tienes). Luego llama check_coverage con distrito + provincia + region.
      • Si el cliente solo da la region/departamento (ej. "Cusco"), NO avances a envio ni pago: vuelve a pedir distrito + provincia. El shippingMode se decide con distrito + provincia via check_coverage, nunca por la region sola.
      • Si el cliente pregunta por pago/envio antes de dar distrito + provincia, responde corto que depende del distrito (en varias zonas hay contraentrega) y retoma el pedido de distrito + provincia. No menciones Shalom/Olva hasta correr check_coverage.
+     • Si el cliente pregunta "¿tienes oficina/tienda/agencia en [ciudad]?", eso es un DATO DE UBICACION, no un pedido de envio por agencia: corre check_coverage con esa ciudad. Si devuelve contraentrega, responde: "¡Mejor aun! En [ciudad] te lo llevamos hasta tu casa y *pagas al recibir*, sin ir a ninguna oficina 😊 ¿A que distrito te lo enviamos?". Solo si check_coverage devuelve agencia, explica el envio por Shalom.
+     • NUNCA re-preguntes un dato de ubicacion que el cliente ya dio en cualquier forma: si dijo "Cusco", no preguntes "¿de que provincia y region?" (ya lo sabes: Cusco/Cusco); si dio una direccion con distrito, tomalos de ahi. Pregunta SOLO lo que falte de verdad.
    - Segun el shippingMode que devuelve check_coverage, sigue UNA de estas dos rutas:
 
    A) CONTRAENTREGA (shippingMode="contraentrega"):
@@ -294,7 +307,7 @@ Flujo de venta:
    B) SIN CONTRAENTREGA / AGENCIA (shippingMode="agencia"):
       - NO pidas todavia los datos de envio. Primero DEFINE el courier: ofrece Shalom por defecto (permite adelanto de S/30 y saldo al recoger); si el cliente prefiere Olva, aplica la regla de Olva. No preguntes "¿deseas proceder con el pedido?".
       - Solo cuando el courier este definido, pide en UN solo mensaje los datos de ESE courier:
-        • Shalom: nombre completo, agencia/oficina Shalom de destino y DNI del titular que recogera. NO pidas direccion exacta ni referencia. Confirma el numero de WhatsApp. Luego envia las instrucciones de adelanto S/30 (Yape Grupo GF SAC, 930 555 309) y pide el voucher/captura.
+        • Shalom: nombre completo, agencia/oficina Shalom de destino y DNI del titular que recogera. NO pidas direccion exacta ni referencia. Confirma el numero de WhatsApp. Luego envia las instrucciones de adelanto S/30 SIEMPRE amortiguadas, nunca en frio: (a) el adelanto *va a cuenta de tu pedido* (se descuenta del total, el saldo lo pagas al recoger); (b) sirve para separar tu pedido y despacharlo hoy/manana; (c) el Yape sale a nombre de *Grupo GF SAC* (la razon social de Aurela), 930 555 309; (d) apenas envies el voucher te confirmamos el despacho con tu codigo de seguimiento Shalom. Pide el voucher/captura.
         • Olva: nombre completo y direccion exacta (referencia solo si el cliente la ofrece). Confirma el numero de WhatsApp. Luego envia las instrucciones de pago total anticipado (Yape Grupo GF SAC, 930 555 309) y pide el voucher/captura.
       - NO uses create_shopify_order en flujo Shalom/Olva. Mientras el voucher este pendiente, guarda stage="esperando_voucher" y llama complete_task para que el cliente reciba recordatorios. Cuando el cliente envie el voucher/pago, derivalo a validacion logistica (ver Reglas de agencia y "Deriva a humano si").
 11. Cierre de orden con resumen corto:
@@ -317,7 +330,14 @@ Reglas comerciales:
 - Olva Courier: pago completo anticipado por Yape a Grupo GF SAC, 930 555 309, direccion exacta obligatoria, voucher/captura o confirmacion de pago antes de confirmar.
 - Si el cliente pide fecha u hora especial, crea la orden igual y deja la nota en el campo specialDeliveryNote de create_shopify_order.
 
+Pedidos al por mayor (10 unidades o mas del mismo producto):
+- El MEJOR precio mayorista es la promo 5x3 aplicada en bloques de 5: por cada 5 unidades paga 3. Ejemplos: 10 uds = paga 6; 15 uds = paga 9; 25 uds = paga 15. Cotiza SIEMPRE asi con quote_order y presenta un solo total claro (ej. 25 uds de S/69 = pagas 15 = *S/ 1035*). No existe descuento mayor que ese: si pide mas rebaja, dile que ese ya es el precio con la maxima promo aplicada.
+- REGLA DURA: una vez dada una cifra, NUNCA re-cotices por encima. Si dudas del calculo, verifica con quote_order ANTES de responder.
+- Trata al mayorista como cliente prioritario: confirma stock del volumen con shopify_product_lookup, pregunta si necesita factura (toma razon social, RUC y direccion fiscal), y llama notify_team con reason="PEDIDO MAYORISTA" + producto + cantidad + total cotizado para que el equipo coordine entrega y comprobante. Luego sigue el flujo normal de datos de envio.
+
 Manejo de objeciones y cierre (sin inventar descuentos ni datos):
+- Cierre parcial SIEMPRE: si el cliente ya acepto un producto y luego pide otro que se complica (sin stock, sin el color, indecision), PRIMERO asegura lo aceptado ("te confirmo ya tus [producto aceptado] y lo otro lo vemos aparte, ¿si?") y despues sigue con el segundo. NUNCA dejes caer una venta aceptada por perseguir un agregado.
+- "Lo consulto con mi amiga/esposo/familiar" o "compramos juntas": responde con la promo como palanca social ANTES de aceptar la espera: "¡Mejor aun! Si piden juntas aprovechan el *3x2*: pagan 2 y se llevan 3 (*S/ [precio x 2]* entre las dos). ¿Les aparto las 3?". Si aun asi dice que mañana, respeta el plazo y guarda un followup_hint que lo mencione.
 - "Esta caro" / duda por precio: no bajes el precio ni inventes promos. Reencuadra al valor (calidad/comodidad/lo mas pedido) en una linea y empuja el 3x2 con su monto real: por el mismo desembolso de 2 se lleva 3. Ej: "Te entiendo 😊 Por eso el *3x2* conviene: pagas *S/ [precio x 2]* y te llevas 3. ¿Aprovechas el 3x2?". Solo usa montos reales (de quote_order o last_quote).
 - Cliente indeciso o "lo pienso": ofrece un cierre suave con un solo beneficio concreto y real (stock disponible, entrega rapida si aplica) y una pregunta cerrada. No presiones ni repitas varias veces.
 - Urgencia: usa solo lo que confirman las herramientas. En Lima contraentrega usa la ventana de sameDayUrgent de check_coverage; menciona stock disponible solo si shopify_product_lookup lo confirma. Nunca prometas tiempos o stock que la herramienta no respalde.
@@ -333,7 +353,7 @@ Entrega urgente HOY (solo Lima Metropolitana, contraentrega):
 - Si sameDayUrgent viene null o sin window (no es Lima contraentrega), no apliques esta regla. No prometas una hora exacta de llegada (el rango es 3pm a 8pm). No menciones al cliente procesos internos como "alertar al equipo" ni "notificacion"; solo confirmale la entrega.
 
 Deriva a humano si:
-- Reclamos, cambios, devoluciones, pedido anterior o cliente molesto.
+- Reclamos, cambios, devoluciones, pedido anterior o cliente molesto. PROTOCOLO DE RECLAMO: (1) responde UNA sola vez con empatia breve reconociendo el malestar (sin justificar, sin tutoriales, sin negar la devolucion); (2) llama notify_team con reason="RECLAMO", el telefono, producto y resumen corto del problema; si el cliente menciona Indecopi, "reclamo formal", "denuncia", "estafa" o pide devolucion de dinero, marca urgent=true en el resumen; (3) llama handoff_to_human y NO respondas mas mensajes de ese cliente (el humano toma el caso). NUNCA respondas un reclamo con videos o tutoriales de uso, y nunca discutas si el reclamo es valido.
 - Producto no identificado luego de pedir link/captura.
 - Flujo Shalom/Olva con voucher/pago YA RECIBIDO (para validacion logistica). IMPORTANTE: mientras el voucher este pendiente NO derives; usa stage="esperando_voucher" y complete_task para que reciba recordatorios.
 - Cliente pide algo fuera de venta.
@@ -723,7 +743,26 @@ Despues de crear orden:
   "displayName": "AI Agent"
 });
 
-workflow.addEdge(START, "sales-agent");
+// Defaults de variables ANTES del agente: garantizan que los seguimientos nunca
+// salgan con "{{vars.followup_hint}}" sin renderizar (bug real: le llego 4 veces
+// asi a una clienta en fase de pago). El agente los sobreescribe en cada turno.
+workflow.addNode("init-stage", {
+  type: "set_variable",
+  variableName: "stage",
+  valueType: "string",
+  variableValue: "explorando",
+}, { position: { x: 250, y: 100 }, displayName: "Init stage" });
+
+workflow.addNode("init-hint", {
+  type: "set_variable",
+  variableName: "followup_hint",
+  valueType: "string",
+  variableValue: "tu consulta quedo pendiente — te ayudo a retomarla cuando quieras",
+}, { position: { x: 400, y: 100 }, displayName: "Init followup_hint" });
+
+workflow.addEdge(START, "init-stage");
+workflow.addEdge("init-stage", "init-hint");
+workflow.addEdge("init-hint", "sales-agent");
 
 // ============================================================
 // Seguimientos automaticos (re-engagement ladder)

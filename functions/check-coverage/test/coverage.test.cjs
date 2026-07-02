@@ -88,11 +88,46 @@ for (const place of MUST_NOT_MATCH) {
   check(`NO reconoce ${JSON.stringify(place)}`, recognize(place) === null);
 }
 
-// --- Resultado ---------------------------------------------------------------
-if (failures > 0) {
-  console.error(`\n✗ ${failures} chequeo(s) fallaron`);
-  console.error(`\nResiduo del corpus sin reconocer (${misses.length}):`);
-  for (const m of misses) console.error(`  ${JSON.stringify(m)}`);
-  process.exit(1);
+// --- 4) Contraentrega en provincia (ruteo end-to-end) -------------------------
+// Regresion de los casos reales que se fueron a Shalom+adelanto por error:
+// ciudad suelta sin provincia/region, pregunta con "oficina", y Cajamarca.
+const { handleRequest } = globalThis.__aurelaCheckCoverage;
+
+async function coverageMode(input) {
+  const body = { input };
+  const res = await handleRequest({ method: "POST", url: "http://x/", json: async () => body, text: async () => JSON.stringify(body) });
+  return JSON.parse(await res.text()).shippingMode;
 }
-console.log("✓ Todos los chequeos pasaron");
+
+(async () => {
+  const COD_CASES = [
+    [{ district: "chiclayo" }, "ciudad suelta como distrito (Chiclayo)"],
+    [{ province: "trujillo" }, "ciudad suelta como provincia (Trujillo)"],
+    [{ district: "arequipa" }, "Arequipa suelto"],
+    [{ district: "trujillo", address: "tienes oficina en trujillo?" }, "'oficina' NO fuerza agencia"],
+    [{ district: "banos del inca", province: "cajamarca" }, "Cajamarca: Banos del Inca"],
+    [{ district: "cajamarca" }, "Cajamarca ciudad suelta"],
+    [{ district: "chiclayo", province: "chiclayo", region: "lambayeque" }, "Chiclayo completo"],
+  ];
+  for (const [input, label] of COD_CASES) {
+    check(`contraentrega: ${label}`, (await coverageMode(input)) === "contraentrega");
+  }
+
+  const AGENCIA_CASES = [
+    [{ district: "tayabamba", province: "pataz", region: "la libertad" }, "Tayabamba (remoto) sigue agencia"],
+    [{ district: "cusco", province: "cusco", region: "cusco" }, "Cusco sigue agencia (cobertura no confirmada)"],
+    [{ district: "trujillo", courier: "shalom" }, "courier explicito Shalom gana aun con cobertura"],
+  ];
+  for (const [input, label] of AGENCIA_CASES) {
+    check(`agencia: ${label}`, (await coverageMode(input)) === "agencia");
+  }
+
+  // --- Resultado ---------------------------------------------------------------
+  if (failures > 0) {
+    console.error(`\n✗ ${failures} chequeo(s) fallaron`);
+    console.error(`\nResiduo del corpus sin reconocer (${misses.length}):`);
+    for (const m of misses) console.error(`  ${JSON.stringify(m)}`);
+    process.exit(1);
+  }
+  console.log("✓ Todos los chequeos pasaron");
+})();

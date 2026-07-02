@@ -1,6 +1,11 @@
+async function handler(request, env) {
+  return handleRequest(request, env || globalThis);
+}
+
 const CASH_ON_DELIVERY = {
   lima: ["lima metropolitana", "lima", "*"],
   callao: ["callao", "*"],
+  ancash: ["chimbote", "nuevo chimbote", "coishco", "huaraz"],
   arequipa: [
     "arequipa",
     "alto selva alegre",
@@ -18,6 +23,56 @@ const CASH_ON_DELIVERY = {
   "la libertad": ["trujillo", "el porvenir", "la esperanza", "huanchaco", "moche", "victor larco herrera"],
   lambayeque: ["chiclayo", "jose leonardo ortiz", "la victoria", "lambayeque", "pimentel"],
   piura: ["piura", "castilla", "catacaos", "26 de octubre", "sullana", "talara"],
+  puno: ["juliaca"],
+  cajamarca: ["cajamarca", "banos del inca", "los banos del inca"],
+};
+
+// Distritos no ambiguos donde podemos inferir provincia/region si el agente
+// solo envia district. No incluimos "la victoria" porque tambien existe en Lima.
+// Los distritos de Ancash listados como sin contraentrega tambien se infieren
+// para que el fallback a agencia quede normalizado correctamente.
+const SAFE_DISTRICT_LOCATION_INFERENCE = {
+  chimbote: { province: "santa", region: "ancash" },
+  "nuevo chimbote": { province: "santa", region: "ancash" },
+  coishco: { province: "santa", region: "ancash" },
+  santa: { province: "santa", region: "ancash" },
+  huaraz: { province: "huaraz", region: "ancash" },
+  casma: { province: "casma", region: "ancash" },
+  huarmey: { province: "huarmey", region: "ancash" },
+  caraz: { province: "huaylas", region: "ancash" },
+  yungay: { province: "yungay", region: "ancash" },
+  carhuaz: { province: "carhuaz", region: "ancash" },
+  chiclayo: { province: "chiclayo", region: "lambayeque" },
+  "jose leonardo ortiz": { province: "chiclayo", region: "lambayeque" },
+  lambayeque: { province: "lambayeque", region: "lambayeque" },
+  pimentel: { province: "chiclayo", region: "lambayeque" },
+  juliaca: { province: "san roman", region: "puno" },
+  piura: { province: "piura", region: "piura" },
+  castilla: { province: "piura", region: "piura" },
+  catacaos: { province: "piura", region: "piura" },
+  "26 de octubre": { province: "piura", region: "piura" },
+  sullana: { province: "sullana", region: "piura" },
+  talara: { province: "talara", region: "piura" },
+  trujillo: { province: "trujillo", region: "la libertad" },
+  "el porvenir": { province: "trujillo", region: "la libertad" },
+  "la esperanza": { province: "trujillo", region: "la libertad" },
+  huanchaco: { province: "trujillo", region: "la libertad" },
+  moche: { province: "trujillo", region: "la libertad" },
+  "victor larco herrera": { province: "trujillo", region: "la libertad" },
+  arequipa: { province: "arequipa", region: "arequipa" },
+  "alto selva alegre": { province: "arequipa", region: "arequipa" },
+  cayma: { province: "arequipa", region: "arequipa" },
+  "cerro colorado": { province: "arequipa", region: "arequipa" },
+  characato: { province: "arequipa", region: "arequipa" },
+  "jacobo hunter": { province: "arequipa", region: "arequipa" },
+  "mariano melgar": { province: "arequipa", region: "arequipa" },
+  paucarpata: { province: "arequipa", region: "arequipa" },
+  socabaya: { province: "arequipa", region: "arequipa" },
+  yanahuara: { province: "arequipa", region: "arequipa" },
+  "jose luis bustamante y rivero": { province: "arequipa", region: "arequipa" },
+  cajamarca: { province: "cajamarca", region: "cajamarca" },
+  "banos del inca": { province: "cajamarca", region: "cajamarca" },
+  "los banos del inca": { province: "cajamarca", region: "cajamarca" },
 };
 
 // Los 43 distritos de Lima Metropolitana tienen contraentrega. El cliente
@@ -90,6 +145,16 @@ const CALLAO_PHRASES = ["la perla", "la punta", "carmen de la legua", "carmen de
 const CALLAO_FUZZY_WORDS = ["callao", "ventanilla", "bellavista"];
 
 const DISTRICT_LOCATION_HINTS = {
+  chimbote: { province: "santa", region: "ancash" },
+  "nuevo chimbote": { province: "santa", region: "ancash" },
+  coishco: { province: "santa", region: "ancash" },
+  santa: { province: "santa", region: "ancash" },
+  casma: { province: "casma", region: "ancash" },
+  huarmey: { province: "huarmey", region: "ancash" },
+  caraz: { province: "huaylas", region: "ancash" },
+  yungay: { province: "yungay", region: "ancash" },
+  carhuaz: { province: "carhuaz", region: "ancash" },
+  huaraz: { province: "huaraz", region: "ancash" },
   trujillo: { province: "trujillo", region: "la libertad" },
   "el porvenir": { province: "trujillo", region: "la libertad" },
   "la esperanza": { province: "trujillo", region: "la libertad" },
@@ -109,13 +174,17 @@ const DISTRICT_LOCATION_HINTS = {
   "los olivos": { province: "lima", region: "lima" },
   callao: { province: "callao", region: "callao" },
   chiclayo: { province: "chiclayo", region: "lambayeque" },
+  "jose leonardo ortiz": { province: "chiclayo", region: "lambayeque" },
+  lambayeque: { province: "lambayeque", region: "lambayeque" },
+  pimentel: { province: "chiclayo", region: "lambayeque" },
+  juliaca: { province: "san roman", region: "puno" },
   piura: { province: "piura", region: "piura" },
   castilla: { province: "piura", region: "piura" },
+  catacaos: { province: "piura", region: "piura" },
+  "26 de octubre": { province: "piura", region: "piura" },
+  sullana: { province: "sullana", region: "piura" },
+  talara: { province: "talara", region: "piura" },
 };
-
-async function handler(request, env = globalThis) {
-  return handleRequest(request, env);
-}
 
 if (typeof addEventListener === "function") {
   addEventListener("fetch", (event) => {
@@ -134,15 +203,23 @@ async function handleRequest(request) {
   }
 
   const input = unwrapInput(payload);
-  const region = normalizePlace(input.region || input.departamento || input.department || input.province);
-  const province = normalizePlace(input.province || input.provincia || input.city);
+  let region = normalizePlace(input.region || input.departamento || input.department);
+  let province = normalizePlace(input.province || input.provincia || input.city);
   const district = normalizePlace(input.district || input.distrito || input.zone);
   const address = normalizePlace(input.address || input.direccion || "");
   const shalomAgency = String(input.shalomAgency || input.agenciaShalom || input.shalom_agency || "").trim();
 
+  const inferredLocation = inferLocationFromDistrict({ region, province, district });
+  if (inferredLocation) {
+    region = region || inferredLocation.region;
+    province = province || inferredLocation.province;
+  }
+
   const shippingText = [address, input.shippingMethod, input.metodoEnvio, input.courier, input.agency, shalomAgency].join(" ");
   const selectedCourier = detectCourier(shippingText);
-  const agencyRequested = Boolean(selectedCourier) || /(agencia|oficina)/i.test(shippingText);
+  // Solo un courier EXPLICITO (Shalom/Olva) desvia a agencia. Mencionar
+  // "agencia"/"oficina" NO bloquea la contraentrega: un cliente preguntando
+  // "¿tienes oficina en Trujillo?" debe recibir contraentrega si su zona la tiene.
   const locationIssue = detectLocationInconsistency({ region, province, district });
   if (locationIssue) {
     return json({
@@ -158,7 +235,7 @@ async function handleRequest(request) {
 
   const cod = hasCashOnDelivery({ region, province, district });
 
-  if (cod && !agencyRequested) {
+  if (cod && !selectedCourier) {
     const isLimaMetro = region === "lima" || province === "lima" || region === "callao"
       || province === "callao" || isLimaMetroDistrict(district) || isCallaoDistrict(district);
     return json({
@@ -192,8 +269,8 @@ async function handleRequest(request) {
       shouldCreateOrder: false,
       normalized: { district, province, region },
       message: shalomAgency
-        ? `Listo, lo enviamos a la agencia Shalom: ${shalomAgency}.\nPara separarlo, realiza el adelanto de S/30 al Yape:\nGrupo GF SAC\n📱 930 555 309\nEl saldo lo pagas al recoger.\nTambién necesito el DNI del titular que recogerá.\nEnvíame el voucher o captura para pasarlo a validación logística ✅`
-        : "Perfecto 🙌\nSí podemos enviarlo por Shalom. Para dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nLuego te paso el Yape para el adelanto de S/30 y con el voucher lo pasamos a validación ✅",
+        ? `Listo, lo enviamos a la agencia Shalom: ${shalomAgency}.\nPara separar tu pedido solo se hace un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger).\nYape: Grupo GF SAC (razón social de Aurela)\n📱 930 555 309\nTambién necesito el DNI del titular que recogerá.\nApenas me envíes el voucher, te confirmo el despacho con tu código de seguimiento Shalom ✅`
+        : "Perfecto 🙌\nSí podemos enviarlo por Shalom. Para dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅",
     });
   }
 
@@ -231,7 +308,7 @@ async function handleRequest(request) {
     requiresShalomAgency: true,
     nextAction: "ask_shalom_agency",
     normalized: { district, province, region },
-    message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nLuego te paso el Yape para el adelanto de S/30 y con el voucher lo pasamos a validación ✅",
+    message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅",
   });
 }
 
@@ -333,6 +410,7 @@ function sameDayUrgentInfo() {
 
 function hasCashOnDelivery({ region, province, district }) {
   const candidates = [region, province].filter(Boolean);
+  const placeCandidates = [district, province, region].filter(Boolean);
 
   if (candidates.some((item) => item === "callao")) return true;
   if (candidates.some((item) => item === "lima")) return true;
@@ -347,9 +425,28 @@ function hasCashOnDelivery({ region, province, district }) {
     if (!coveredDistricts) continue;
     if (coveredDistricts.includes("*")) return true;
     if (district && coveredDistricts.includes(district)) return true;
+    if (!district && coveredDistricts.includes(place)) return true;
+  }
+
+  // Si el agente mapea una ciudad/distrito como province o region (ej. "Piura",
+  // "Sullana", "Talara") sin enviar district, igual validamos contra la matriz.
+  if (!district) {
+    for (const coveredDistricts of Object.values(CASH_ON_DELIVERY)) {
+      if (placeCandidates.some((item) => coveredDistricts.includes(item))) return true;
+    }
   }
 
   return false;
+}
+
+function inferLocationFromDistrict({ region, province, district }) {
+  if (!district || (region && province)) return null;
+  const hint = SAFE_DISTRICT_LOCATION_INFERENCE[district];
+  if (!hint) return null;
+  return {
+    region: region || hint.region,
+    province: province || hint.province,
+  };
 }
 
 // Reconoce un distrito de Lima Metropolitana tolerando errores de tipeo del
@@ -539,6 +636,7 @@ globalThis.__aurelaCheckCoverage = {
   handleRequest,
   handler,
   hasCashOnDelivery,
+  inferLocationFromDistrict,
   isCallaoDistrict,
   isLimaMetroDistrict,
   levenshtein,

@@ -14,15 +14,15 @@
     },
     "check-coverage": {
       "files": {
-        "functions/check-coverage/function.yaml": "3da47f082d8331f539ac7c229180a3d3f6be420058d1f2cc7ef30e82e26c8e37",
-        "functions/check-coverage/index.js": "3deada0c5c978838b543efbd02562009281a22995352bd8c23eed9c2e76a3435"
+        "functions/check-coverage/function.yaml": "4f55d367917f9028afbb2371c99d3400b18d934f71ed2289dd46f438b2d83403",
+        "functions/check-coverage/index.js": "776d201b6c72c312930b2d79b7ff1703ede548cba65fde01b5f1f802bb631dc7"
       },
       "id": "f9ddb618-7f39-4ee3-af23-4d9733ba5d55",
-      "lastDeployedAt": "2026-07-01T23:53:13-04:00",
-      "lockVersion": 54,
+      "lastDeployedAt": "2026-07-02T00:09:42-04:00",
+      "lockVersion": 56,
       "slug": "check-coverage",
       "status": "deployed",
-      "updatedAt": "2026-07-01T23:53:13-04:00"
+      "updatedAt": "2026-07-02T00:09:42-04:00"
     },
     "create-shopify-order": {
       "files": {

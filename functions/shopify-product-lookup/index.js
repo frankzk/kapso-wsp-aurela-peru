@@ -371,7 +371,35 @@ async function handleRequest(request, env = globalThis) {
           product = await getPublicProductByHandle(config, mappedHandle);
           if (!product && config.token) product = await getProductByHandle(config, mappedHandle);
         }
-        // 2) Respaldo: busqueda por el texto del anuncio (mejor esfuerzo).
+
+        // 2) AUTO-MAPEO en tiempo real: si el anuncio no esta mapeado, extraer el
+        // NOMBRE del producto del anuncio (token antes de ™, o "nuestra X") y buscar
+        // eso (mucho mas preciso que el cuerpo completo). Si resuelve un unico
+        // producto, se aprende el mapeo (KV) para los siguientes clics. Asi un
+        // anuncio nuevo se auto-mapea en el PRIMER clic, sin intervencion manual.
+        let autoLearned = false;
+        if (!product) {
+          const candidates = extractProductNameCandidates(referral.headline, referral.body);
+          if (candidates.length) {
+            const catalog = await loadPublicCatalog(config);
+            for (const cand of candidates) {
+              const s = searchCatalogProducts(catalog, cand, []);
+              if (s.product && !s.ambiguous) { product = s.product; autoLearned = true; break; }
+            }
+            if (!product && config.token) {
+              for (const cand of candidates) {
+                const ps = await searchProducts(config, cand, []);
+                if (ps.length === 1) { product = ps[0]; autoLearned = true; break; }
+              }
+            }
+          }
+        }
+        if (product && autoLearned && referral.source_id && env?.KV?.put) {
+          const learnedHandle = product.handle || product.__handle;
+          if (learnedHandle) { try { await env.KV.put(`ctwa:${referral.source_id}`, learnedHandle); } catch { /* KV opcional */ } }
+        }
+
+        // 3) Ultimo respaldo: busqueda por el texto completo del anuncio.
         if (!product) {
           const adText = adReferralText(referral);
           if (adText) {
@@ -573,6 +601,39 @@ function adReferralText(referral) {
   if (!referral) return "";
   const parts = [referral.headline, referral.body].filter((s) => typeof s === "string" && s.trim());
   return parts.join(" ").replace(/\s+/g, " ").trim().slice(0, 400);
+}
+
+// Extrae candidatos de NOMBRE de producto del texto del anuncio, ordenados de
+// mas a menos especifico. Sirve para auto-mapear un anuncio nuevo con precision
+// (buscar "TravelersBackpack" o "Cera de Abeja Natural", no todo el cuerpo).
+function extractProductNameCandidates(headline, body) {
+  const text = [headline, body].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  if (!text) return [];
+  const out = [];
+  const push = (v) => {
+    const s = String(v || "").replace(/\s+/g, " ").trim();
+    if (s && s.length >= 3 && !out.some((x) => x.toLowerCase() === s.toLowerCase())) out.push(s);
+  };
+  const W = "A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9'’®™-";
+
+  // 1) Marca(s) antes de ™/®/©: hasta 3 palabras, y tambien solo la ultima palabra.
+  const tmRe = new RegExp(`([${W}]+(?:\\s+[${W}]+){0,2})\\s*[™®©]`, "g");
+  let m;
+  while ((m = tmRe.exec(text)) !== null) {
+    const phrase = m[1].replace(/^(la|el|los|las|tu|tus|un|una|nuestro|nuestra|nuestros|nuestras)\s+/i, "").trim();
+    push(phrase);
+    const words = phrase.split(" ");
+    if (words.length > 1) push(words[words.length - 1]); // solo la marca final (ej. "Austin")
+  }
+
+  // 2) Frase tras "nuestro/nuestra/el/la...": el nombre suele ir ahi.
+  const ourRe = new RegExp(`\\b(?:nuestr[oa]s?|el|la|los|las|tu|tus)\\s+([A-ZÁÉÍÓÚÑ][${W}]*(?:\\s+(?:de|del|para|con|y|a|natural|premium|pro|plus|[A-ZÁÉÍÓÚÑ][${W}]*)){0,4})`, "g");
+  while ((m = ourRe.exec(text)) !== null) push(m[1]);
+
+  // 3) El titular completo como candidato de baja prioridad (a veces es el nombre).
+  if (headline) push(String(headline).replace(/[™®©✨✅✈️🔥💵🚚📦😊]/g, "").trim());
+
+  return out.slice(0, 6);
 }
 
 async function getKapsoConfig(env = globalThis) {
@@ -1644,4 +1705,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaProductLookup = { adReferralText, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText };
+globalThis.__aurelaProductLookup = { adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText };

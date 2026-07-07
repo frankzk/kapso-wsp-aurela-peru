@@ -1,3 +1,7 @@
+async function handler(request, env) {
+  return handleRequest(request, env || globalThis);
+}
+
 const DEFAULT_SHOP_DOMAIN = "aurela-peru.myshopify.com";
 const DEFAULT_PUBLIC_SHOP_DOMAIN = "aurela.pe";
 const DEFAULT_API_VERSION = "2026-04";
@@ -6,12 +10,20 @@ const MAX_CATALOG_PAGES = 20;
 const DEFAULT_PHONE_NUMBER_ID = "1241790819006805";
 const CTWA_MAX_PAGES = 3;
 
+const FASHION_BAG_DIRECT_RE = /\b(cartera|carteras|bolso|bolsos|morral|morrales|bandolera|bandoleras)\b/;
+const FASHION_BAG_BOLSA_RE = /\b(bolsa|bolsas)\b/;
+const FASHION_BAG_SUPPORT_RE = /\b(hombro|cruzado|cruzada|mano|mujer|cuero|pu|livia|almendra|daysi|daisy|madison|elegante|funcional|disenador|lujo|suave|sofisticada)\b/;
+const NON_FASHION_BAG_ACCESSORY_RE = /\b(organizador|organizadora|organizadores|gancho|ganchos|armario|closet|percha|perchas|trapeador|trapeadores|escoba|escobas|parasol|auto|autos|automovil|automoviles|carro|carros|vehiculo|vehiculos|coche|coches|soporte|soportes|slimvisor|handyhold|strapsafe|tapa|tapas|rack|estante|estantes|basura|limpieza|maquillaje|cosmetico|cosmeticos|brocha|brochas|pincel|pinceles|silicona|viaje|viajes|neceser|estuche|contenedor|contenedores|malla|visera)\b/;
+
 const PRODUCT_STOPWORDS = new Set([
   "aurela",
   "alguna",
   "algunas",
   "alguno",
   "algunos",
+  "compra",
+  "comprar",
+  "comprarlo",
   "consulta",
   "consultar",
   "color",
@@ -21,18 +33,36 @@ const PRODUCT_STOPWORDS = new Set([
   "deseo",
   "disponible",
   "disponibles",
+  "duda",
+  "elegiste",
+  "escogiste",
   "este",
   "hay",
   "hola",
   "info",
   "informacion",
+  "interesa",
+  "interesada",
+  "interesado",
   "las",
   "link",
   "los",
+  "mensaje",
   "modelo",
   "modelos",
+  "mostrar",
+  "muestrame",
   "opcion",
   "opciones",
+  "otro",
+  "otros",
+  "otra",
+  "otras",
+  "para",
+  "pedir",
+  "pedirlo",
+  "plantilla",
+  "por",
   "queda",
   "quedan",
   "que",
@@ -42,10 +72,13 @@ const PRODUCT_STOPWORDS = new Set([
   "quiero",
   "sale",
   "saber",
+  "seleccionaste",
   "stock",
   "talla",
   "tallas",
   "tengo",
+  "tiene",
+  "tienen",
   "tienes",
   "una",
   "unas",
@@ -54,6 +87,7 @@ const PRODUCT_STOPWORDS = new Set([
   "venden",
   "vendes",
   "ver",
+  "vistazo",
   "azul",
   "beige",
   "blanca",
@@ -77,15 +111,45 @@ const CATEGORY_RULES = [
     triggers: [
       "cuchillo",
       "cuchillos",
-      "afilador",
-      "afiladores",
+      "navaja",
+      "navajas",
     ],
     terms: [
       "cuchillo",
       "cuchillos",
-      "afilador",
-      "afiladores",
-      "cubiertos",
+      "navaja",
+      "navajas",
+      "kamisori",
+      "hokkaido",
+      "chef",
+    ],
+  },
+  {
+    key: "carteras",
+    label: "carteras/bolsos",
+    triggers: [
+      "cartera",
+      "carteras",
+      "bolso",
+      "bolsos",
+      "bolsa",
+      "bolsas",
+      "morral",
+      "morrales",
+      "bandolera",
+      "bandoleras",
+    ],
+    terms: [
+      "cartera",
+      "carteras",
+      "bolso",
+      "bolsos",
+      "bolsa",
+      "bolsas",
+      "morral",
+      "morrales",
+      "bandolera",
+      "bandoleras",
     ],
   },
   {
@@ -132,6 +196,8 @@ const CATEGORY_RULES = [
       "chanclas",
       "pantufla",
       "pantuflas",
+      "slide",
+      "slides",
       "zapatilla casa",
       "zapatillas casa",
     ],
@@ -140,13 +206,13 @@ const CATEGORY_RULES = [
     key: "cocina",
     label: "cocina",
     triggers: ["cocina", "olla", "ollas", "sarten", "sartenes", "pinza", "utensilio", "utensilios"],
-    terms: ["cocina", "olla", "ollas", "sarten", "sartenes", "pinza", "utensilio", "utensilios", "calor"],
+    terms: ["cocina", "olla", "ollas", "sarten", "sartenes", "pinza", "utensilio", "utensilios"],
   },
   {
     key: "bano",
     label: "bano",
-    triggers: ["bano", "baño", "ducha", "organizador", "estante", "drenaje"],
-    terms: ["bano", "baño", "ducha", "organizador", "estante", "drenaje", "esquinero"],
+    triggers: ["bano", "baño", "ducha", "drenaje", "esquinero", "inodoro", "lavamanos", "jabonera"],
+    terms: ["bano", "baño", "ducha", "drenaje", "esquinero", "inodoro", "lavamanos", "jabonera"],
   },
   {
     key: "camping",
@@ -157,20 +223,23 @@ const CATEGORY_RULES = [
   {
     key: "auto",
     label: "auto",
-    triggers: ["auto", "carro", "vehiculo", "vehiculo", "car"],
-    terms: ["auto", "carro", "vehiculo", "vehiculo", "car"],
+    triggers: ["auto", "autos", "carro", "carros", "vehiculo", "vehículo", "vehiculos", "vehículos", "automovil", "automoviles", "coche", "coches", "car"],
+    terms: ["auto", "autos", "carro", "carros", "vehiculo", "vehículo", "vehiculos", "vehículos", "automovil", "automoviles", "coche", "coches", "car"],
   },
   {
     key: "medias",
     label: "medias",
     triggers: ["media", "medias", "calcetin", "calcetines", "calceta", "calcetas", "soquete", "soquetes"],
-    terms: ["media", "medias", "calcetin", "calcetines", "calceta", "soquete"],
+    terms: ["media", "medias", "calcetin", "calcetines", "calceta", "calcetas", "soquete", "soquetes"],
   },
 ];
 
 // Synonyms so customer terms match catalog wording (e.g. "medias" == "calcetines" in Peru).
 const SYNONYM_GROUPS = [
   ["medias", "media", "calcetines", "calcetin", "calceta", "calcetas", "soquetes", "soquete"],
+  ["sandalias", "sandalia", "slides", "slide", "chanclas", "chancla", "pantuflas", "pantufla"],
+  ["mochila", "mochilas", "backpack", "backpacks"],
+  ["cartera", "carteras", "bolso", "bolsos", "bolsa", "bolsas", "morral", "morrales", "bandolera", "bandoleras"],
 ];
 
 const SYNONYM_MAP = buildSynonymMap(SYNONYM_GROUPS);
@@ -189,16 +258,47 @@ function buildSynonymMap(groups) {
 }
 
 function tokenVariants(token) {
-  const set = SYNONYM_MAP.get(token);
-  return set ? [...set] : [token];
+  const variants = new Set();
+  const add = (value) => {
+    const normalized = normalizeSearchText(value);
+    if (normalized) variants.add(normalized);
+  };
+
+  add(token);
+  const synonymSet = SYNONYM_MAP.get(normalizeSearchText(token));
+  if (synonymSet) synonymSet.forEach(add);
+
+  for (const variant of [...variants]) {
+    expandSingularPlural(variant).forEach(add);
+  }
+
+  return [...variants];
+}
+
+function expandSingularPlural(token) {
+  const output = new Set();
+  const normalized = normalizeSearchText(token);
+  if (!normalized || normalized.length < 4) return [];
+
+  output.add(normalized);
+  if (normalized.endsWith("es") && normalized.length > 5) output.add(normalized.slice(0, -2));
+  if (normalized.endsWith("s") && normalized.length > 4) output.add(normalized.slice(0, -1));
+  if (!normalized.endsWith("s")) output.add(`${normalized}s`);
+  return [...output];
 }
 
 function searchableHasToken(searchable, token) {
-  return tokenVariants(token).some((variant) => variant && searchable.includes(variant));
-}
+  const normalizedSearchable = normalizeSearchText(searchable);
+  const compactSearchable = compactSearchText(normalizedSearchable);
+  const tokens = new Set(normalizedSearchable.split(/\s+/).filter(Boolean));
 
-async function handler(request, env = globalThis) {
-  return handleRequest(request, env);
+  return tokenVariants(token).some((variant) => {
+    const compactVariant = compactSearchText(variant);
+    if (!variant) return false;
+    if (variant.includes(" ")) return normalizedSearchable.includes(variant);
+    if (tokens.has(variant)) return true;
+    return compactVariant.length >= 6 && compactSearchable.includes(compactVariant);
+  });
 }
 
 if (typeof addEventListener === "function") {
@@ -284,6 +384,19 @@ async function handleRequest(request, env = globalThis) {
           handlesTried: handles,
           matches: catalogSearch.matches,
           message: buildAmbiguousMessage(catalogSearch.matches),
+        });
+      }
+
+      if (catalogSearch?.categorySubtypePrompt) {
+        return json({
+          found: false,
+          reason: "category_subtype_needed",
+          category: catalogSearch.category,
+          input: queryText,
+          matches: [],
+          message: buildOrganizerSubtypeMessage(),
+          customerMessage: buildOrganizerSubtypeMessage(),
+          nextAction: "ask_subtype",
         });
       }
 
@@ -387,10 +500,6 @@ function getConfig(env = globalThis) {
 }
 
 // --- Rescate por anuncio Click-to-WhatsApp ---------------------------------
-// Cuando el cliente llega de un anuncio y escribe solo "precio"/"hola", el
-// referral del anuncio (titular + cuerpo) identifica el producto. Se busca
-// primero inline en el payload y, si no, se trae por la API de Kapso.
-
 async function resolveAdText(env, input) {
   let referral = extractInlineReferral(input);
   if (!referral) referral = await fetchCtwaReferral(env, input);
@@ -472,8 +581,6 @@ async function fetchCtwaReferral(env, input) {
   }
 }
 
-// Admin privado (invoke con X-API-Key): adSeed guarda la KAPSO_API_KEY en KV;
-// adDebug resuelve el texto del anuncio de una conversacion para pruebas.
 async function adAdmin(input, env) {
   if (input.adSeed && typeof input.adSeed === "object") {
     if (!env?.KV) return json({ ok: false, reason: "no_kv" });
@@ -489,6 +596,7 @@ async function adAdmin(input, env) {
   const adText = await resolveAdText(env, input);
   return json({ ok: true, kapsoApiKey: Boolean(cfg.apiKey), kv: Boolean(env?.KV), adText: adText || null });
 }
+
 
 function collectInputText(input) {
   const root = isPlainObject(input.input) ? input.input : input;
@@ -547,7 +655,7 @@ function extractHandleCandidates(value) {
   const directHandle = text.match(/^[^\s/]{3,}$/);
   if (directHandle) {
     const decoded = safeDecode(directHandle[0]);
-    return uniqueCandidates([directHandle[0], decoded, encodeURIComponent(decoded), slugifyHandle(decoded)]);
+    return uniqueCandidates([directHandle[0], decoded, encodeURIComponent(decoded), slugifyHandle(decoded), compactSearchText(decoded)]);
   }
 
   const urls = text.match(/https?:\/\/[^\s]+/gi) || [];
@@ -563,7 +671,7 @@ function extractHandleCandidates(value) {
 
       const rawHandle = parts[productIndex + 1].replace(/\.js$/i, "");
       const decodedHandle = safeDecode(rawHandle);
-      candidates.push(rawHandle, decodedHandle, encodeURIComponent(decodedHandle), slugifyHandle(decodedHandle));
+      candidates.push(rawHandle, decodedHandle, encodeURIComponent(decodedHandle), slugifyHandle(decodedHandle), compactSearchText(decodedHandle));
     } catch {
       // Ignore malformed URLs and let catalog/name search handle the original text.
     }
@@ -645,8 +753,8 @@ function publicHeaders() {
 
 function getCatalogProductByHandle(catalog, handle) {
   if (!handle || !Array.isArray(catalog) || catalog.length === 0) return null;
-  const keys = handleKeys(handle);
-  return catalog.find((product) => handleKeys(product.handle).some((key) => keys.includes(key))) || null;
+  const keys = new Set(handleKeys(handle));
+  return catalog.find((product) => handleKeys(product.handle).some((key) => keys.has(key))) || null;
 }
 
 function searchCatalogProducts(catalog, text, handles = []) {
@@ -664,6 +772,10 @@ function searchCatalogProducts(catalog, text, handles = []) {
     return { product: null, ambiguous: false, matches: [] };
   }
   const category = detectCategoryQuery(text, query);
+
+  if (category?.key === "organizadores" && isPureCategoryQuery(query, category)) {
+    return { product: null, ambiguous: false, matches: [], category, categorySubtypePrompt: true };
+  }
 
   const scored = catalog
     .map((product) => ({ product, score: scoreCatalogProduct(product, query) }))
@@ -715,13 +827,23 @@ function cleanProductQuery(text, handles) {
     .join(" ")
     .replace(/https?:\/\/\S+/gi, " ")
     .replace(/[|]/g, " ");
-  const normalized = normalizeSearchText(cleaned);
-  const tokens = normalized
-    .split(/\s+/)
-    .filter((token) => token.length >= 3 && !PRODUCT_STOPWORDS.has(token))
-    .slice(0, 12);
+  const expanded = expandProductQueryText(cleaned);
+  const normalized = normalizeSearchText(expanded);
+  const tokens = uniqueCandidates(
+    normalized
+      .split(/\s+/)
+      .filter((token) => token.length >= 3 && !PRODUCT_STOPWORDS.has(token))
+      .slice(0, 18),
+  ).slice(0, 12);
 
   return { normalized: tokens.join(" "), tokens };
+}
+
+function expandProductQueryText(text) {
+  const raw = String(text || "");
+  const camelSpaced = raw.replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, "$1 $2");
+  const punctuationSpaced = raw.replace(/([a-zA-ZáéíóúÁÉÍÓÚñÑ])([0-9])/g, "$1 $2").replace(/([0-9])([a-zA-ZáéíóúÁÉÍÓÚñÑ])/g, "$1 $2");
+  return `${raw} ${camelSpaced} ${punctuationSpaced}`;
 }
 
 function scoreCatalogProduct(product, query) {
@@ -734,18 +856,31 @@ function scoreCatalogProduct(product, query) {
 
   const handle = normalizeSearchText(product.handle || "");
   const title = normalizeSearchText(product.title || "");
+  const compactSearchable = compactSearchText(searchable);
+  const compactHandle = compactSearchText(handle);
+  const compactTitle = compactSearchText(title);
+  const compactQuery = compactSearchText(query.normalized);
 
   let score = 0;
   if (query.normalized && searchable.includes(query.normalized)) score += 40;
   if (query.normalized && title.includes(query.normalized)) score += 20;
+  if (compactQuery.length >= 5 && compactSearchable.includes(compactQuery)) score += 35;
+  if (compactQuery.length >= 5 && compactTitle.includes(compactQuery)) score += 22;
+  if (compactQuery.length >= 5 && compactHandle.includes(compactQuery)) score += 18;
 
   for (const token of query.tokens) {
     const variants = tokenVariants(token);
-    if (variants.some((variant) => handle === variant)) score += 28;
-    else if (variants.some((variant) => handle.includes(variant))) score += 12;
-    if (variants.some((variant) => title === variant || title.startsWith(`${variant} `))) score += 24;
-    else if (variants.some((variant) => title.includes(variant))) score += 14;
-    else if (variants.some((variant) => searchable.includes(variant))) score += 3;
+    const compactVariants = variants.map(compactSearchText).filter((variant) => variant.length >= 6);
+
+    if (variants.some((variant) => handle === variant) || compactVariants.some((variant) => compactHandle === variant)) score += 28;
+    else if (variants.some((variant) => termMatchesSearchText(handle, variant)) || compactVariants.some((variant) => compactHandle.includes(variant))) score += 12;
+
+    if (
+      variants.some((variant) => title === variant || title.startsWith(`${variant} `))
+      || compactVariants.some((variant) => compactTitle === variant || compactTitle.startsWith(variant))
+    ) score += 24;
+    else if (variants.some((variant) => termMatchesSearchText(title, variant)) || compactVariants.some((variant) => compactTitle.includes(variant))) score += 14;
+    else if (variants.some((variant) => termMatchesSearchText(searchable, variant)) || compactVariants.some((variant) => compactSearchable.includes(variant))) score += 3;
   }
 
   const matchedTokens = query.tokens.filter((token) => searchableHasToken(searchable, token)).length;
@@ -765,8 +900,13 @@ function hasDistinctiveProductToken(product, query) {
     .split(/\s+/)
     .filter((token) => token.length >= 4 && !PRODUCT_STOPWORDS.has(token));
   const identityTokens = new Set([...titleTokens, ...handleTokens]);
+  const compactIdentity = compactSearchText([...identityTokens].join(" "));
 
-  return query.tokens.some((token) => identityTokens.has(token));
+  return query.tokens.some((token) => {
+    if (identityTokens.has(token)) return true;
+    const compactToken = compactSearchText(token);
+    return compactToken.length >= 6 && compactIdentity.includes(compactToken);
+  });
 }
 
 function detectCategoryQuery(text, query) {
@@ -812,20 +952,27 @@ function scoreCategoryProduct(product, category) {
     (product.categories || []).join(" "),
   ].filter(Boolean).join(" "));
 
+  if (category.key === "carteras" && !isFashionBagSearchText(searchable)) return 0;
+
   let score = 0;
   for (const rawTerm of category.terms) {
     const term = normalizeSearchText(rawTerm);
     if (!term) continue;
-    if (title.includes(term)) score += 16;
-    else if (handle.includes(term)) score += 12;
-    else if (searchable.includes(term)) score += 8;
+    if (termMatchesSearchText(title, term)) score += 16;
+    else if (termMatchesSearchText(handle, term)) score += 12;
+    else if (termMatchesSearchText(searchable, term)) score += 8;
   }
 
   if ((product.categories || []).includes(category.key)) score += 20;
+  if (category.key === "carteras") {
+    if (FASHION_BAG_DIRECT_RE.test(title) || (FASHION_BAG_BOLSA_RE.test(title) && FASHION_BAG_SUPPORT_RE.test(searchable))) score += 35;
+    if (FASHION_BAG_DIRECT_RE.test(handle) || (FASHION_BAG_BOLSA_RE.test(handle) && FASHION_BAG_SUPPORT_RE.test(searchable))) score += 20;
+    if (FASHION_BAG_SUPPORT_RE.test(searchable)) score += 8;
+  }
   if (category.key === "cuchillos") {
-    const isAccessory = /\b(afilador|organizador|cubiertos)\b/.test(title);
-    if (/\bcuchillo(s)?\b/.test(title) && !isAccessory) score += 35;
-    if (/\bcuchillo(s)?\b/.test(title)) score += 12;
+    const isAccessory = /\b(afilador|afiladores|organizador|organizadores|cubierto|cubiertos|escurridor)\b/.test(title);
+    if (/\b(cuchillo|cuchillos|navaja|navajas)\b/.test(title) && !isAccessory) score += 35;
+    if (/\b(cuchillo|cuchillos|navaja|navajas)\b/.test(title)) score += 12;
     if (/\b(plegable|chef|forjado|kamisori|hokkaido)\b/.test(title)) score += 12;
     if (isAccessory) score -= 28;
   }
@@ -834,6 +981,17 @@ function scoreCategoryProduct(product, category) {
     if (/\bmaleta|tapa|rack|estante|cubiertos\b/.test(title)) score += 4;
   }
   return score;
+}
+
+function termMatchesSearchText(searchText, rawTerm) {
+  const normalized = normalizeSearchText(searchText);
+  const term = normalizeSearchText(rawTerm);
+  if (!normalized || !term) return false;
+  if (term.includes(" ")) return ` ${normalized} `.includes(` ${term} `);
+
+  const tokens = new Set(normalized.split(/\s+/).filter(Boolean));
+  if (tokens.has(term)) return true;
+  return expandSingularPlural(term).some((variant) => tokens.has(variant));
 }
 
 function catalogMatchSummary(item) {
@@ -857,6 +1015,7 @@ function findInStockAlternatives(catalog, product, limit = 2) {
   return catalog
     .filter((candidate) => !isProductOutOfStock(candidate))
     .filter((candidate) => !handleKeys(candidate.handle || "").some((key) => currentKeys.has(key)))
+    .filter((candidate) => !targetCategories.has("carteras") || isFashionBagSearchText(candidate.searchText || candidate.title || ""))
     .map((candidate) => ({
       product: candidate,
       score: (candidate.categories || []).filter((category) => targetCategories.has(category)).length,
@@ -921,7 +1080,7 @@ async function searchProducts(config, text, handles = []) {
   const searchText = [handleText, cleaned]
     .filter(Boolean)
     .join(" ")
-    .replace(/\b(tengo|una|consulta|aurela|producto|products|pe|https?)\b/gi, " ")
+    .replace(/\b(tengo|tiene|tienen|tienes|una|consulta|aurela|producto|products|pe|https?)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -976,10 +1135,10 @@ async function searchProducts(config, text, handles = []) {
 function buildProductSearchQueries(text, handles) {
   const queries = handles.map((handle) => `handle:${escapeSearch(handle)}`);
   const words = uniqueCandidates(
-    text
+    expandProductQueryText(text)
       .split(/\s+/)
       .map((word) => word.replace(/[^a-z0-9-]/gi, ""))
-      .filter((word) => word.length >= 3)
+      .filter((word) => word.length >= 3 && !PRODUCT_STOPWORDS.has(normalizeSearchText(word)))
       .slice(0, 8),
   );
 
@@ -1187,6 +1346,13 @@ function buildCategoryOutOfStockMessage(category) {
   ].join("\n");
 }
 
+function buildOrganizerSubtypeMessage() {
+  return [
+    "Si, tenemos varios tipos de organizadores.",
+    "¿Para que los necesitas: baño, cocina, auto, viaje, ropa, cables o carteras?",
+  ].join("\n");
+}
+
 function buildProductFoundMessage(product) {
   const price = product.priceRange?.min;
   const maxPrice = product.priceRange?.max;
@@ -1297,17 +1463,37 @@ function buildCategoryMatchesMessage(category, matches) {
 
 function categorizeSearchText(searchText) {
   return CATEGORY_RULES
-    .filter((rule) => rule.terms.some((term) => searchText.includes(normalizeSearchText(term))))
+    .filter((rule) => {
+      const matches = rule.terms.some((term) => termMatchesSearchText(searchText, term));
+      if (!matches) return false;
+      if (rule.key === "carteras") return isFashionBagSearchText(searchText);
+      return true;
+    })
     .map((rule) => rule.key);
+}
+
+function isFashionBagSearchText(searchText) {
+  const normalized = normalizeSearchText(searchText);
+  if (NON_FASHION_BAG_ACCESSORY_RE.test(normalized)) return false;
+  if (FASHION_BAG_DIRECT_RE.test(normalized)) return true;
+  return FASHION_BAG_BOLSA_RE.test(normalized) && FASHION_BAG_SUPPORT_RE.test(normalized);
 }
 
 function handleKeys(handle) {
   const decoded = safeDecode(handle);
-  return uniqueCandidates([handle, decoded, encodeURIComponent(decoded), slugifyHandle(decoded)]);
+  return uniqueCandidates([
+    handle,
+    decoded,
+    encodeURIComponent(decoded),
+    slugifyHandle(decoded),
+    slugifyHandle(expandProductQueryText(decoded)),
+    compactSearchText(decoded),
+  ]);
 }
 
 function slugifyHandle(value) {
   return String(value)
+    .replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, "$1 $2")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -1327,6 +1513,10 @@ function normalizeSearchText(value) {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function compactSearchText(value) {
+  return normalizeSearchText(value).replace(/\s+/g, "");
 }
 
 function normalizePublicTags(tags) {

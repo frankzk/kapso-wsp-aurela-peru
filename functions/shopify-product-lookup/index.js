@@ -358,18 +358,31 @@ async function handleRequest(request, env = globalThis) {
     }
 
     // Rescate por anuncio (Click-to-WhatsApp): si no se identifico producto y el
-    // cliente llego de un anuncio (ej. escribio solo "Precio"), usar el titular +
-    // cuerpo del anuncio para identificar el producto en vez de pedir link/captura.
+    // cliente llego de un anuncio (ej. escribio solo "Precio"), identificar el
+    // producto por el anuncio de origen en vez de pedir link/captura.
     let adRescued = false;
     if (!product) {
-      const adText = await resolveAdText(env, input);
-      if (adText) {
-        const catalog = await loadPublicCatalog(config);
-        const adSearch = searchCatalogProducts(catalog, adText, []);
-        product = adSearch.product || null;
-        if (!product && config.token) {
-          const adProducts = await searchProducts(config, adText, []);
-          product = adProducts[0] || null;
+      const referral = await resolveAdReferral(env, input);
+      if (referral) {
+        // 1) Mapa preciso source_id -> handle (config del anuncio). Es lo mas
+        // confiable: el texto del anuncio describe el uso y suele ser ambiguo.
+        const mappedHandle = await getAdMappedHandle(env, referral.source_id);
+        if (mappedHandle) {
+          product = await getPublicProductByHandle(config, mappedHandle);
+          if (!product && config.token) product = await getProductByHandle(config, mappedHandle);
+        }
+        // 2) Respaldo: busqueda por el texto del anuncio (mejor esfuerzo).
+        if (!product) {
+          const adText = adReferralText(referral);
+          if (adText) {
+            const catalog = await loadPublicCatalog(config);
+            const adSearch = searchCatalogProducts(catalog, adText, []);
+            product = adSearch.product || null;
+            if (!product && config.token) {
+              const adProducts = await searchProducts(config, adText, []);
+              product = adProducts[0] || null;
+            }
+          }
         }
         if (product) adRescued = true;
       }
@@ -500,10 +513,25 @@ function getConfig(env = globalThis) {
 }
 
 // --- Rescate por anuncio Click-to-WhatsApp ---------------------------------
-async function resolveAdText(env, input) {
+async function resolveAdReferral(env, input) {
   let referral = extractInlineReferral(input);
   if (!referral) referral = await fetchCtwaReferral(env, input);
-  return adReferralText(referral);
+  return referral;
+}
+
+async function resolveAdText(env, input) {
+  return adReferralText(await resolveAdReferral(env, input));
+}
+
+// Mapa preciso anuncio -> producto, guardado en KV como ctwa:<source_id> = handle.
+async function getAdMappedHandle(env, sourceId) {
+  if (!sourceId || !env?.KV?.get) return null;
+  try {
+    const handle = await env.KV.get(`ctwa:${sourceId}`);
+    return handle || null;
+  } catch {
+    return null;
+  }
 }
 
 function extractInlineReferral(node, depth = 0) {
@@ -591,11 +619,29 @@ async function adAdmin(input, env) {
       await env.KV.put("KAPSO_API_KEY", key.trim());
       saved.push("KAPSO_API_KEY");
     }
+    // Mapa anuncio->producto: { map: { "<source_id>": "<handle>" } }
+    const map = input.adSeed.map;
+    if (isPlainObject(map)) {
+      for (const [sourceId, handle] of Object.entries(map)) {
+        if (sourceId && typeof handle === "string" && handle.trim()) {
+          await env.KV.put(`ctwa:${sourceId}`, handle.trim());
+          saved.push(`ctwa:${sourceId}`);
+        }
+      }
+    }
     return json({ ok: true, seeded: saved });
   }
   const cfg = await getKapsoConfig(env);
-  const adText = await resolveAdText(env, input);
-  return json({ ok: true, kapsoApiKey: Boolean(cfg.apiKey), kv: Boolean(env?.KV), adText: adText || null });
+  const referral = await resolveAdReferral(env, input);
+  const mappedHandle = referral ? await getAdMappedHandle(env, referral.source_id) : null;
+  return json({
+    ok: true,
+    kapsoApiKey: Boolean(cfg.apiKey),
+    kv: Boolean(env?.KV),
+    sourceId: referral?.source_id || null,
+    mappedHandle: mappedHandle || null,
+    adText: adReferralText(referral) || null,
+  });
 }
 
 

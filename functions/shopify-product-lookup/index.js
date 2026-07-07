@@ -3,6 +3,8 @@ const DEFAULT_PUBLIC_SHOP_DOMAIN = "aurela.pe";
 const DEFAULT_API_VERSION = "2026-04";
 const CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_CATALOG_PAGES = 20;
+const DEFAULT_PHONE_NUMBER_ID = "1241790819006805";
+const CTWA_MAX_PAGES = 3;
 
 const PRODUCT_STOPWORDS = new Set([
   "aurela",
@@ -208,6 +210,7 @@ if (typeof addEventListener === "function") {
 async function handleRequest(request, env = globalThis) {
   try {
     const input = await readJson(request);
+    if (input.adSeed || input.adDebug) return adAdmin(input, env);
     const config = getConfig(env);
     const queryText = collectInputText(input);
     const handles = extractHandleCandidates(queryText);
@@ -252,6 +255,24 @@ async function handleRequest(request, env = globalThis) {
     if (!product && queryText && config.token) {
       const products = await searchProducts(config, queryText, handles);
       product = products[0] || null;
+    }
+
+    // Rescate por anuncio (Click-to-WhatsApp): si no se identifico producto y el
+    // cliente llego de un anuncio (ej. escribio solo "Precio"), usar el titular +
+    // cuerpo del anuncio para identificar el producto en vez de pedir link/captura.
+    let adRescued = false;
+    if (!product) {
+      const adText = await resolveAdText(env, input);
+      if (adText) {
+        const catalog = await loadPublicCatalog(config);
+        const adSearch = searchCatalogProducts(catalog, adText, []);
+        product = adSearch.product || null;
+        if (!product && config.token) {
+          const adProducts = await searchProducts(config, adText, []);
+          product = adProducts[0] || null;
+        }
+        if (product) adRescued = true;
+      }
     }
 
     if (!product) {
@@ -325,6 +346,7 @@ async function handleRequest(request, env = globalThis) {
     return json({
       found: true,
       source: normalizedProduct.__source || "shopify",
+      adRescued,
       product: normalizedProduct,
       outOfStock: false,
       customerMessage: buildProductFoundMessage(normalizedProduct),
@@ -362,6 +384,110 @@ function getConfig(env = globalThis) {
   const token = env.SHOPIFY_ADMIN_ACCESS_TOKEN || env.sHOPIFYADMINACCESSTOKEN || globalThis.SHOPIFY_ADMIN_ACCESS_TOKEN || globalThis.sHOPIFYADMINACCESSTOKEN;
 
   return { apiVersion, publicShopDomain, shopDomain, token };
+}
+
+// --- Rescate por anuncio Click-to-WhatsApp ---------------------------------
+// Cuando el cliente llega de un anuncio y escribe solo "precio"/"hola", el
+// referral del anuncio (titular + cuerpo) identifica el producto. Se busca
+// primero inline en el payload y, si no, se trae por la API de Kapso.
+
+async function resolveAdText(env, input) {
+  let referral = extractInlineReferral(input);
+  if (!referral) referral = await fetchCtwaReferral(env, input);
+  return adReferralText(referral);
+}
+
+function extractInlineReferral(node, depth = 0) {
+  if (!node || depth > 6) return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = extractInlineReferral(item, depth + 1);
+      if (r) return r;
+    }
+    return null;
+  }
+  if (typeof node === "object") {
+    const st = String(node.source_type || node.sourceType || "").toLowerCase();
+    const hasCopy = node.headline || node.body;
+    const isAd = st === "ad" || st === "post";
+    if ((isAd && (hasCopy || node.source_id)) || (hasCopy && (node.ctwa_clid || node.source_id || node.source_url))) {
+      return { source_type: st || "ad", headline: node.headline || node.title || "", body: node.body || node.description || "" };
+    }
+    for (const value of Object.values(node)) {
+      const r = extractInlineReferral(value, depth + 1);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+function extractReferral(message) {
+  const referral = message?.referral || message?.message?.referral || message?.kapso?.referral;
+  if (referral && (referral.source_id || referral.source_type || referral.ctwa_clid)) return referral;
+  return null;
+}
+
+function adReferralText(referral) {
+  if (!referral) return "";
+  const parts = [referral.headline, referral.body].filter((s) => typeof s === "string" && s.trim());
+  return parts.join(" ").replace(/\s+/g, " ").trim().slice(0, 400);
+}
+
+async function getKapsoConfig(env = globalThis) {
+  let apiKey = env.KAPSO_API_KEY || env.kAPSOAPIKEY || globalThis.KAPSO_API_KEY || globalThis.kAPSOAPIKEY;
+  if (!apiKey && env?.KV?.get) {
+    try { apiKey = await env.KV.get("KAPSO_API_KEY"); } catch { /* sin KV */ }
+  }
+  const apiBase = env.KAPSO_API_BASE || env.kAPSOAPIBASE || globalThis.KAPSO_API_BASE || "https://api.kapso.ai";
+  return { apiKey, apiBase };
+}
+
+async function fetchCtwaReferral(env, input) {
+  try {
+    const { apiKey, apiBase } = await getKapsoConfig(env);
+    const root = isPlainObject(input.input) ? { ...input, ...input.input } : input;
+    const conversationId = root.conversationId || root.conversation_id;
+    const phoneNumberId = root.phoneNumberId || root.phone_number_id || root.whatsappPhoneNumberId || root.whatsapp_phone_number_id || DEFAULT_PHONE_NUMBER_ID;
+    if (!apiKey || !conversationId) return null;
+
+    const base = (cursor) => `${apiBase}/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/messages`
+      + `?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=100`
+      + (cursor ? `&after=${encodeURIComponent(cursor)}` : "");
+    let url = base(null);
+    for (let page = 0; page < CTWA_MAX_PAGES && url; page += 1) {
+      const response = await fetch(url, { headers: { "X-API-Key": apiKey, "Content-Type": "application/json" } });
+      if (!response.ok) return null;
+      const payload = await response.json();
+      for (const message of payload?.data || []) {
+        const referral = extractReferral(message);
+        if (referral) return referral;
+      }
+      const nextCursor = payload?.paging?.cursors?.after || payload?.paging?.next;
+      if (!nextCursor) break;
+      url = base(nextCursor);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Admin privado (invoke con X-API-Key): adSeed guarda la KAPSO_API_KEY en KV;
+// adDebug resuelve el texto del anuncio de una conversacion para pruebas.
+async function adAdmin(input, env) {
+  if (input.adSeed && typeof input.adSeed === "object") {
+    if (!env?.KV) return json({ ok: false, reason: "no_kv" });
+    const saved = [];
+    const key = input.adSeed.KAPSO_API_KEY;
+    if (typeof key === "string" && key.trim()) {
+      await env.KV.put("KAPSO_API_KEY", key.trim());
+      saved.push("KAPSO_API_KEY");
+    }
+    return json({ ok: true, seeded: saved });
+  }
+  const cfg = await getKapsoConfig(env);
+  const adText = await resolveAdText(env, input);
+  return json({ ok: true, kapsoApiKey: Boolean(cfg.apiKey), kv: Boolean(env?.KV), adText: adText || null });
 }
 
 function collectInputText(input) {
@@ -1276,4 +1402,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaProductLookup = { extractHandleCandidates, handleRequest, handler, loadPublicCatalog };
+globalThis.__aurelaProductLookup = { adReferralText, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText };

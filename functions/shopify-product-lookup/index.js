@@ -559,8 +559,9 @@ async function fetchCtwaReferral(env, input) {
     const phoneNumberId = root.phoneNumberId || root.phone_number_id || root.whatsappPhoneNumberId || root.whatsapp_phone_number_id || DEFAULT_PHONE_NUMBER_ID;
     if (!apiKey || !conversationId) return null;
 
-    const base = (cursor) => `${apiBase}/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/messages`
-      + `?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=100`
+    const base = (cursor) => `${apiBase}/platform/v1/whatsapp/messages`
+      + `?conversation_id=${encodeURIComponent(conversationId)}`
+      + `&phone_number_id=${encodeURIComponent(phoneNumberId)}&direction=inbound&limit=100`
       + (cursor ? `&after=${encodeURIComponent(cursor)}` : "");
     let url = base(null);
     for (let page = 0; page < CTWA_MAX_PAGES && url; page += 1) {

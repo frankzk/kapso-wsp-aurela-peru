@@ -548,7 +548,12 @@ function extractInlineReferral(node, depth = 0) {
     const hasCopy = node.headline || node.body;
     const isAd = st === "ad" || st === "post";
     if ((isAd && (hasCopy || node.source_id)) || (hasCopy && (node.ctwa_clid || node.source_id || node.source_url))) {
-      return { source_type: st || "ad", headline: node.headline || node.title || "", body: node.body || node.description || "" };
+      return {
+        source_type: st || "ad",
+        source_id: node.source_id || node.sourceId || node.source_ad_id || "",
+        headline: node.headline || node.title || "",
+        body: node.body || node.description || "",
+      };
     }
     for (const value of Object.values(node)) {
       const r = extractInlineReferral(value, depth + 1);

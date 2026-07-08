@@ -5,6 +5,11 @@ async function handler(request, env) {
 const CASH_ON_DELIVERY = {
   lima: ["lima metropolitana", "lima", "*"],
   callao: ["callao", "*"],
+  ica: ["ica", "parcona", "la tinguina", "los aquijes", "subanjalla", "subtanjalla", "pisco", "chincha alta"],
+  moquegua: ["moquegua", "samegua", "ilo"],
+  tacna: ["tacna", "alto de la alianza", "ciudad nueva", "coronel gregorio albarracin lanchipa", "pocollay"],
+  ayacucho: ["ayacucho", "san juan bautista", "carmen alto", "jesus nazareno", "andres avelino caceres dorregaray"],
+  junin: ["huancayo", "el tambo", "chilca"],
   ancash: ["chimbote", "nuevo chimbote", "coishco", "huaraz"],
   arequipa: [
     "arequipa",
@@ -25,15 +30,9 @@ const CASH_ON_DELIVERY = {
   piura: ["piura", "castilla", "catacaos", "26 de octubre", "sullana", "talara"],
   puno: ["juliaca"],
   cajamarca: ["cajamarca", "banos del inca", "los banos del inca"],
-  // Solo Cusco ciudad (distrito cusco / provincia cusco). Otros distritos de la
-  // region (Wanchaq, San Sebastian, etc.) requieren validacion antes de agregarse.
   cusco: ["cusco"],
 };
 
-// Distritos no ambiguos donde podemos inferir provincia/region si el agente
-// solo envia district. No incluimos "la victoria" porque tambien existe en Lima.
-// Los distritos de Ancash listados como sin contraentrega tambien se infieren
-// para que el fallback a agencia quede normalizado correctamente.
 const SAFE_DISTRICT_LOCATION_INFERENCE = {
   chimbote: { province: "santa", region: "ancash" },
   "nuevo chimbote": { province: "santa", region: "ancash" },
@@ -45,6 +44,30 @@ const SAFE_DISTRICT_LOCATION_INFERENCE = {
   caraz: { province: "huaylas", region: "ancash" },
   yungay: { province: "yungay", region: "ancash" },
   carhuaz: { province: "carhuaz", region: "ancash" },
+  ica: { province: "ica", region: "ica" },
+  parcona: { province: "ica", region: "ica" },
+  "la tinguina": { province: "ica", region: "ica" },
+  "los aquijes": { province: "ica", region: "ica" },
+  subanjalla: { province: "ica", region: "ica" },
+  subtanjalla: { province: "ica", region: "ica" },
+  pisco: { province: "pisco", region: "ica" },
+  "chincha alta": { province: "chincha", region: "ica" },
+  moquegua: { province: "mariscal nieto", region: "moquegua" },
+  samegua: { province: "mariscal nieto", region: "moquegua" },
+  ilo: { province: "ilo", region: "moquegua" },
+  tacna: { province: "tacna", region: "tacna" },
+  "alto de la alianza": { province: "tacna", region: "tacna" },
+  "ciudad nueva": { province: "tacna", region: "tacna" },
+  "coronel gregorio albarracin lanchipa": { province: "tacna", region: "tacna" },
+  pocollay: { province: "tacna", region: "tacna" },
+  ayacucho: { province: "huamanga", region: "ayacucho" },
+  "san juan bautista": { province: "huamanga", region: "ayacucho" },
+  "carmen alto": { province: "huamanga", region: "ayacucho" },
+  "jesus nazareno": { province: "huamanga", region: "ayacucho" },
+  "andres avelino caceres dorregaray": { province: "huamanga", region: "ayacucho" },
+  huancayo: { province: "huancayo", region: "junin" },
+  "el tambo": { province: "huancayo", region: "junin" },
+  chilca: { province: "huancayo", region: "junin" },
   chiclayo: { province: "chiclayo", region: "lambayeque" },
   "jose leonardo ortiz": { province: "chiclayo", region: "lambayeque" },
   lambayeque: { province: "lambayeque", region: "lambayeque" },
@@ -79,47 +102,30 @@ const SAFE_DISTRICT_LOCATION_INFERENCE = {
   cusco: { province: "cusco", region: "cusco" },
 };
 
-// Los 43 distritos de Lima Metropolitana tienen contraentrega. El cliente
-// suele dar solo el distrito (ej. "San Juan de Lurigancho", "Breña") sin la
-// provincia/region, asi que reconocemos el distrito por nombre para no caer al
-// fallback de agencia. Nombres normalizados (sin acentos, minusculas).
 const LIMA_METRO_DISTRICTS = new Set([
-  // Lima Centro
   "barranco", "brena", "cercado de lima", "jesus maria", "la victoria", "lima",
   "lince", "magdalena del mar", "miraflores", "pueblo libre", "rimac",
   "san borja", "san isidro", "san luis", "san miguel", "santiago de surco", "surco", "surquillo",
-  // Lima Norte
   "ancon", "carabayllo", "comas", "independencia", "los olivos", "puente piedra",
   "san martin de porres", "smp", "santa rosa",
-  // Lima Este
   "ate", "ate vitarte", "vitarte", "chaclacayo", "cieneguilla", "el agustino",
   "lurigancho-chosica", "lurigancho", "chosica", "san juan de lurigancho", "sjl", "santa anita",
-  // Lima Sur
   "chorrillos", "lurin", "pachacamac", "pucusana", "punta hermosa", "punta negra",
   "san bartolo", "san juan de miraflores", "sjm", "santa maria del mar",
-  "villa el salvador", "ves", "villa maria del triunfo", "vmt",
+  "villa el salvador", "ves", "villa maria del triunfo", "vmt"
 ]);
 
-// Nombres de distrito de >=2 palabras (y referencias frecuentes) que el cliente
-// suele escribir DENTRO de una frase mas larga, p.ej. "av pezet 131 san isidro"
-// o "lima/lima/santiago de surco". Se buscan por contencion de substring; todos
-// son lo bastante especificos como para no producir falsos positivos.
 const LIMA_METRO_PHRASES = [
   "san juan de lurigancho", "san juan de miraflores", "san martin de porres",
   "villa maria del triunfo", "villa el salvador", "santiago de surco",
-  "lurigancho chosica", "magdalena del mar", "santa maria del mar",
+  "lurigancho chosica", "magdalena del mar", "santa maria del mar", "san felipe",
   "pueblo libre", "cercado de lima", "centro de lima", "san isidro", "san borja",
   "san luis", "san miguel", "la molina", "la victoria", "los olivos",
   "el agustino", "jesus maria", "santa anita", "santa rosa", "puente piedra",
   "punta hermosa", "punta negra", "san bartolo", "canto grande", "pte piedra",
-  "villa maria",
+  "villa maria"
 ];
 
-// Tokens de una sola palabra que identifican un distrito de Lima Metropolitana,
-// incluyendo abreviaturas y anexos/urbanizaciones conocidas (campoy/zarate=SJL,
-// huaycan/salamanca/ceres/santa clara/vitarte/huachipa=Ate, collique=Comas,
-// chacarilla/higuereta/monterrico=Surco, maranga=San Miguel). Se evaluan como
-// palabra completa, nunca como substring, para no matchear dentro de otra palabra.
 const LIMA_METRO_TOKENS = new Set([
   "barranco", "brena", "chorrillos", "surquillo", "lince", "miraflores", "surco",
   "rimac", "ancon", "carabayllo", "comas", "independencia", "ate", "chaclacayo",
@@ -127,100 +133,130 @@ const LIMA_METRO_TOKENS = new Set([
   "vitarte", "huaycan", "campoy", "zarate", "huascar", "bayovar", "chacarilla",
   "higuereta", "monterrico", "collique", "salamanca", "ceres", "huachipa",
   "manchay", "maranga", "magdalena", "molina", "olivos", "agustino", "cercado",
-  "victoria", "porres", "porras",
-  "sjl", "smp", "vmt", "ves", "sjm",
+  "victoria", "porres", "porras", "sjl", "smp", "vmt", "ves", "sjm",
+  "corpac", "orrantia", "caminos", "salaverry", "cavenecia", "huallamarca"
 ]);
 
-// Nombres largos de una palabra usados solo para tolerancia a typos (Levenshtein
-// por token). No incluye palabras cortas (<5) para evitar falsos positivos.
-// "barranco" se omite a proposito: su unico typo plausible ("barranca") es una
-// provincia distinta al norte de Lima, asi que solo se acepta exacto (via tokens).
 const LIMA_FUZZY_WORDS = [
-  "chorrillos", "surquillo", "miraflores", "carabayllo",
-  "independencia", "chaclacayo", "cieneguilla", "pachacamac", "pucusana",
-  "lurigancho", "chosica", "vitarte", "magdalena", "molina", "olivos",
-  "agustino", "cercado", "santiago", "comas", "rimac", "ancon", "brena",
+  "chorrillos", "surquillo", "miraflores", "carabayllo", "independencia",
+  "chaclacayo", "cieneguilla", "pachacamac", "pucusana", "lurigancho",
+  "chosica", "vitarte", "magdalena", "molina", "olivos", "agustino",
+  "cercado", "santiago", "comas", "rimac", "ancon", "brena",
+  "san isidro", "san borja", "san miguel", "jesus maria", "chacarilla", "monterrico",
+  "higuereta", "salamanca", "huachipa", "manchay", "maranga", "orrantia", "cavenecia",
+  "huallamarca", "salaverry", "caminos", "corpac"
 ];
 
-// Callao es provincia aparte de Lima, pero tiene contraentrega a todo el Callao.
-// Si el cliente da solo el distrito del Callao (sin provincia) lo reconocemos aca.
 const CALLAO_TOKENS = new Set(["callao", "ventanilla", "bellavista", "pachacutec", "oquendo"]);
 const CALLAO_PHRASES = ["la perla", "la punta", "carmen de la legua", "carmen de la lengua", "mi peru"];
 const CALLAO_FUZZY_WORDS = ["callao", "ventanilla", "bellavista"];
 
 const DISTRICT_LOCATION_HINTS = {
-  chimbote: { province: "santa", region: "ancash" },
-  "nuevo chimbote": { province: "santa", region: "ancash" },
-  coishco: { province: "santa", region: "ancash" },
-  santa: { province: "santa", region: "ancash" },
-  casma: { province: "casma", region: "ancash" },
-  huarmey: { province: "huarmey", region: "ancash" },
-  caraz: { province: "huaylas", region: "ancash" },
-  yungay: { province: "yungay", region: "ancash" },
-  carhuaz: { province: "carhuaz", region: "ancash" },
-  huaraz: { province: "huaraz", region: "ancash" },
-  trujillo: { province: "trujillo", region: "la libertad" },
-  "el porvenir": { province: "trujillo", region: "la libertad" },
-  "la esperanza": { province: "trujillo", region: "la libertad" },
-  huanchaco: { province: "trujillo", region: "la libertad" },
-  moche: { province: "trujillo", region: "la libertad" },
-  "victor larco herrera": { province: "trujillo", region: "la libertad" },
-  arequipa: { province: "arequipa", region: "arequipa" },
-  "alto selva alegre": { province: "arequipa", region: "arequipa" },
-  cayma: { province: "arequipa", region: "arequipa" },
-  "cerro colorado": { province: "arequipa", region: "arequipa" },
-  "jacobo hunter": { province: "arequipa", region: "arequipa" },
+  ...SAFE_DISTRICT_LOCATION_INFERENCE,
   miraflores: { province: "lima", region: "lima" },
   "santiago de surco": { province: "lima", region: "lima" },
   "san isidro": { province: "lima", region: "lima" },
   "san borja": { province: "lima", region: "lima" },
   "san miguel": { province: "lima", region: "lima" },
   "los olivos": { province: "lima", region: "lima" },
-  callao: { province: "callao", region: "callao" },
-  chiclayo: { province: "chiclayo", region: "lambayeque" },
-  "jose leonardo ortiz": { province: "chiclayo", region: "lambayeque" },
-  lambayeque: { province: "lambayeque", region: "lambayeque" },
-  pimentel: { province: "chiclayo", region: "lambayeque" },
-  juliaca: { province: "san roman", region: "puno" },
-  piura: { province: "piura", region: "piura" },
-  castilla: { province: "piura", region: "piura" },
-  catacaos: { province: "piura", region: "piura" },
-  "26 de octubre": { province: "piura", region: "piura" },
-  sullana: { province: "sullana", region: "piura" },
-  talara: { province: "talara", region: "piura" },
+  callao: { province: "callao", region: "callao" }
+};
+
+const LIMA_ZONE_TO_DISTRICT = {
+  corpac: "san isidro",
+  orrantia: "san isidro",
+  cavenecia: "san isidro",
+  huallamarca: "san isidro",
+  caminos: "san isidro",
+  salaverry: "san isidro",
+  chacarilla: "santiago de surco",
+  monterrico: "santiago de surco",
+  higuereta: "santiago de surco",
+  maranga: "san miguel",
+  salamanca: "ate",
+  ceres: "ate",
+  huaycan: "ate",
+  huachipa: "lurigancho",
+  manchay: "pachacamac",
+  zarate: "san juan de lurigancho",
+  campoy: "san juan de lurigancho",
+  bayovar: "san juan de lurigancho",
+  huascar: "san juan de lurigancho",
+  collique: "comas",
+  "san felipe": "jesus maria"
+};
+
+const LIMA_ZONE_ALIASES = {
+  chacarrilla: "chacarilla",
+  chacarila: "chacarilla",
+  chacarillaa: "chacarilla",
+  monterico: "monterrico",
+  monterrico: "monterrico",
+  monterriko: "monterrico",
+  higareta: "higuereta",
+  higuereyta: "higuereta",
+  higuiereta: "higuereta",
+  corpac: "corpac",
+  corpak: "corpac",
+  corpack: "corpac",
+  orrantia: "orrantia",
+  orrantya: "orrantia",
+  orrantiah: "orrantia",
+  cavenecia: "cavenecia",
+  cavenesia: "cavenecia",
+  cavenecya: "cavenecia",
+  huallamarca: "huallamarca",
+  wallamarca: "huallamarca",
+  huayamarka: "huallamarca",
+  salaberry: "salaverry",
+  salavery: "salaverry",
+  salavery: "salaverry",
+  camimos: "caminos",
+  caminos: "caminos",
+  sanisidro: "san isidro",
+  "san izidro": "san isidro",
+  "san isidoro": "san isidro",
+  monterricoo: "monterrico",
+  huachipa: "huachipa",
+  huachhipa: "huachipa",
+  manchai: "manchay",
+  salamnca: "salamanca",
+  maranca: "maranga",
+  jesusmaria: "jesus maria"
 };
 
 if (typeof addEventListener === "function") {
-  addEventListener("fetch", (event) => {
-    event.respondWith(handleRequest(event.request, globalThis));
-  });
+  addEventListener("fetch", (event) => event.respondWith(handleRequest(event.request, globalThis)));
 }
 
 async function handleRequest(request, env = globalThis) {
   const payload = await readJson(request);
 
-  // Debug/mantenimiento del watchdog (invocacion directa con X-API-Key).
   if (payload.watchdogDebug || payload.watchdogSeed || payload.forceSweep) {
     return watchdogAdmin(payload, env);
   }
 
-  // Follow-up ladder routing: when invoked by a Decide node, the payload carries
-  // `available_edges`. Coverage tool calls never include it, so this branch is
-  // inert for the normal coverage flow.
   if (Array.isArray(payload.available_edges)) {
-    // El ladder invoca esto constantemente: aprovechamos para correr el watchdog
-    // de clientes sin respuesta (compuerta KV: max 1 barrido cada 10 min).
     const routed = routeFollowup(payload);
-    try { await maybeRunWatchdog(env); } catch { /* nunca romper el ruteo */ }
+    try { await maybeRunWatchdog(env); } catch {}
     return routed;
   }
 
   const input = unwrapInput(payload);
   let region = normalizePlace(input.region || input.departamento || input.department);
   let province = normalizePlace(input.province || input.provincia || input.city);
-  const district = normalizePlace(input.district || input.distrito || input.zone);
+  let district = normalizePlace(input.district || input.distrito || input.zone);
   const address = normalizePlace(input.address || input.direccion || "");
   const shalomAgency = String(input.shalomAgency || input.agenciaShalom || input.shalom_agency || "").trim();
+
+  district = canonicalizeLimaPlace(district);
+  province = canonicalizeLimaPlace(province);
+  region = canonicalizeLimaPlace(region);
+
+  const normalizedLimaLocation = normalizeLimaLocation({ region, province, district });
+  region = normalizedLimaLocation.region;
+  province = normalizedLimaLocation.province;
+  district = normalizedLimaLocation.district;
 
   const inferredLocation = inferLocationFromDistrict({ region, province, district });
   if (inferredLocation) {
@@ -230,9 +266,6 @@ async function handleRequest(request, env = globalThis) {
 
   const shippingText = [address, input.shippingMethod, input.metodoEnvio, input.courier, input.agency, shalomAgency].join(" ");
   const selectedCourier = detectCourier(shippingText);
-  // Solo un courier EXPLICITO (Shalom/Olva) desvia a agencia. Mencionar
-  // "agencia"/"oficina" NO bloquea la contraentrega: un cliente preguntando
-  // "¿tienes oficina en Trujillo?" debe recibir contraentrega si su zona la tiene.
   const locationIssue = detectLocationInconsistency({ region, province, district });
   if (locationIssue) {
     return json({
@@ -247,7 +280,6 @@ async function handleRequest(request, env = globalThis) {
   }
 
   const cod = hasCashOnDelivery({ region, province, district });
-
   if (cod && !selectedCourier) {
     const isLimaMetro = region === "lima" || province === "lima" || region === "callao"
       || province === "callao" || isLimaMetroDistrict(district) || isCallaoDistrict(district);
@@ -283,7 +315,7 @@ async function handleRequest(request, env = globalThis) {
       normalized: { district, province, region },
       message: shalomAgency
         ? `Listo, lo enviamos a la agencia Shalom: ${shalomAgency}.\nPara separar tu pedido solo se hace un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger).\nYape: Grupo GF SAC (razón social de Aurela)\n📱 930 555 309\nTambién necesito el DNI del titular que recogerá.\nApenas me envíes el voucher, te confirmo el despacho con tu código de seguimiento Shalom ✅`
-        : "Perfecto 🙌\nSí podemos enviarlo por Shalom. Para dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅",
+        : "Perfecto 🙌\nSí podemos enviarlo por Shalom. Para dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅"
     });
   }
 
@@ -302,7 +334,7 @@ async function handleRequest(request, env = globalThis) {
       paymentRecipient: "Grupo GF SAC",
       yapePhone: "930 555 309",
       normalized: { district, province, region },
-      message: "Perfecto 😊\nPor Olva Courier el pago es anticipado completo.\nPuedes realizarlo al Yape:\nGrupo GF SAC\n📱 930 555 309\nCuando lo realices, envíame el voucher o captura para continuar con la confirmación ✅",
+      message: "Perfecto 😊\nPor Olva Courier el pago es anticipado completo.\nPuedes realizarlo al Yape:\nGrupo GF SAC\n📱 930 555 309\nCuando lo realices, envíame el voucher o captura para continuar con la confirmación ✅"
     });
   }
 
@@ -321,27 +353,13 @@ async function handleRequest(request, env = globalThis) {
     requiresShalomAgency: true,
     nextAction: "ask_shalom_agency",
     normalized: { district, province, region },
-    message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅",
+    message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅"
   });
 }
 
-// ----- Follow-up ladder decide routing -----
-// Serves three decide types, detected by available_edges:
-//   resume reason  -> ["respondio", "timeout"]
-//   terminal check -> ["seguir", "terminar"]
-//   quiet hours    -> ["enviar", "esperar"]  (Peru UTC-5, quiet 00:00-06:59)
 const FOLLOWUP_TERMINAL_MARKERS = [
-  "orden creada",
-  "orden_creada",
-  "lead_perdido",
-  "lead perdido",
-  "handoff",
-  "derivad",
-  "no_interes",
-  "no interes",
-  "reclamo",
-  "molesto",
-  "cancel",
+  "orden creada", "orden_creada", "lead_perdido", "lead perdido", "handoff",
+  "derivad", "no_interes", "no interes", "reclamo", "molesto", "cancel"
 ];
 
 function routeFollowup(payload) {
@@ -353,21 +371,13 @@ function routeFollowup(payload) {
     const messages = (payload.whatsapp_context && Array.isArray(payload.whatsapp_context.messages))
       ? payload.whatsapp_context.messages
       : [];
-
-    if (edges.includes("timeout") && edges.includes("respondio")) {
-      return json({ next_edge: resolveResume(system, messages) });
-    }
-
+    if (edges.includes("timeout") && edges.includes("respondio")) return json({ next_edge: resolveResume(system, messages) });
     if (edges.includes("terminar")) {
       const stage = String(vars.stage || "").toLowerCase();
       const isTerminal = FOLLOWUP_TERMINAL_MARKERS.some((marker) => stage.includes(marker));
       return json({ next_edge: isTerminal ? "terminar" : "seguir" });
     }
-
-    if (edges.includes("esperar")) {
-      return json({ next_edge: isQuietHourPeru() ? "esperar" : "enviar" });
-    }
-
+    if (edges.includes("esperar")) return json({ next_edge: isQuietHourPeru() ? "esperar" : "enviar" });
     return json({ next_edge: edges[0] || "" });
   } catch (error) {
     return json({ next_edge: "respondio", error: error instanceof Error ? error.message : String(error) });
@@ -376,17 +386,14 @@ function routeFollowup(payload) {
 
 function resolveResume(system, messages) {
   const reason = system && system.last_resume && system.last_resume.reason;
-  if (typeof reason === "string" && reason.length > 0) {
-    return reason === "timeout" ? "timeout" : "respondio";
-  }
+  if (typeof reason === "string" && reason.length > 0) return reason === "timeout" ? "timeout" : "respondio";
   const last = messages.length > 0 ? messages[messages.length - 1] : null;
-  if (last && last.direction === "inbound") return "respondio";
-  return "timeout";
+  return last && last.direction === "inbound" ? "respondio" : "timeout";
 }
 
 function isQuietHourPeru() {
   const limaHour = (new Date().getUTCHours() + 24 - 5) % 24;
-  return limaHour < 7; // 00:00-06:59 -> quiet
+  return limaHour < 7;
 }
 
 function isPlainObject(value) {
@@ -398,38 +405,23 @@ async function readJson(request) {
     const url = new URL(request.url);
     return Object.fromEntries(url.searchParams.entries());
   }
-
   const text = await request.text();
   if (!text.trim()) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { message: text };
-  }
+  try { return JSON.parse(text); } catch { return { message: text }; }
 }
 
-// Ventana de entrega urgente HOY (solo Lima Metropolitana, contraentrega).
-// Peru = UTC-5. Corte exacto en horas enteras: 10:00 y 12:00.
 function sameDayUrgentInfo() {
   const limaHour = (new Date().getUTCHours() + 24 - 5) % 24;
-  if (limaHour < 10) {
-    return { limaHour, window: "antes_10", canDeliverToday: true, deliveryWindowText: "hoy", alertTeam: false };
-  }
-  if (limaHour < 12) {
-    return { limaHour, window: "ventana_10_12", canDeliverToday: true, deliveryWindowText: "hoy entre las 3pm y 8pm", alertTeam: true };
-  }
+  if (limaHour < 10) return { limaHour, window: "antes_10", canDeliverToday: true, deliveryWindowText: "hoy", alertTeam: false };
+  if (limaHour < 12) return { limaHour, window: "ventana_10_12", canDeliverToday: true, deliveryWindowText: "hoy entre las 3pm y 8pm", alertTeam: true };
   return { limaHour, window: "cerrado", canDeliverToday: false, deliveryWindowText: null, alertTeam: false };
 }
 
 function hasCashOnDelivery({ region, province, district }) {
   const candidates = [region, province].filter(Boolean);
   const placeCandidates = [district, province, region].filter(Boolean);
-
   if (candidates.some((item) => item === "callao")) return true;
   if (candidates.some((item) => item === "lima")) return true;
-
-  // El cliente dio solo el distrito (sin provincia/region): si es un distrito de
-  // Lima Metropolitana o del Callao, igual tiene contraentrega.
   if (district && isLimaMetroDistrict(district)) return true;
   if (district && isCallaoDistrict(district)) return true;
 
@@ -441,14 +433,11 @@ function hasCashOnDelivery({ region, province, district }) {
     if (!district && coveredDistricts.includes(place)) return true;
   }
 
-  // Si el agente mapea una ciudad/distrito como province o region (ej. "Piura",
-  // "Sullana", "Talara") sin enviar district, igual validamos contra la matriz.
   if (!district) {
     for (const coveredDistricts of Object.values(CASH_ON_DELIVERY)) {
       if (placeCandidates.some((item) => coveredDistricts.includes(item))) return true;
     }
   }
-
   return false;
 }
 
@@ -456,91 +445,96 @@ function inferLocationFromDistrict({ region, province, district }) {
   if (!district || (region && province)) return null;
   const hint = SAFE_DISTRICT_LOCATION_INFERENCE[district];
   if (!hint) return null;
-  return {
-    region: region || hint.region,
-    province: province || hint.province,
-  };
+  return { region: region || hint.region, province: province || hint.province };
 }
 
-// Reconoce un distrito de Lima Metropolitana tolerando errores de tipeo del
-// cliente (ej. "San juam de lurigancho" -> "san juan de lurigancho"). Usa
-// distancia de edicion solo en nombres largos para evitar falsos positivos en
-// abreviaturas cortas ("sjl", "ate", "ves", "vmt", "sjm").
+function canonicalizeLimaPlace(value) {
+  if (!value) return value;
+  if (LIMA_ZONE_ALIASES[value]) return LIMA_ZONE_ALIASES[value];
+  const text = cleanDistrictText(value);
+  if (LIMA_ZONE_ALIASES[text]) return LIMA_ZONE_ALIASES[text];
+  for (const [alias, canonical] of Object.entries(LIMA_ZONE_ALIASES)) {
+    const maxDist = alias.length >= 10 ? 2 : 1;
+    if (Math.abs(alias.length - text.length) <= maxDist && levenshtein(text, alias) <= maxDist) return canonical;
+  }
+  return value;
+}
+
+function normalizeLimaLocation({ region, province, district }) {
+  let nextRegion = region;
+  let nextProvince = province;
+  let nextDistrict = district;
+
+  if (LIMA_ZONE_TO_DISTRICT[nextDistrict]) {
+    nextDistrict = LIMA_ZONE_TO_DISTRICT[nextDistrict];
+    if (!nextProvince || isLimaMetroDistrict(nextProvince) || nextProvince === nextDistrict) nextProvince = "lima";
+    if (!nextRegion) nextRegion = "lima";
+  }
+
+  if (isLimaMetroDistrict(nextProvince) && (!nextDistrict || !isLimaMetroDistrict(nextDistrict) || LIMA_ZONE_TO_DISTRICT[nextDistrict])) {
+    if (LIMA_ZONE_TO_DISTRICT[nextDistrict]) {
+      nextDistrict = LIMA_ZONE_TO_DISTRICT[nextDistrict];
+    } else {
+      nextDistrict = nextProvince;
+    }
+    nextProvince = "lima";
+    if (!nextRegion) nextRegion = "lima";
+  }
+
+  if ((nextProvince === "lima" || nextRegion === "lima") && LIMA_ZONE_TO_DISTRICT[nextDistrict]) {
+    nextDistrict = LIMA_ZONE_TO_DISTRICT[nextDistrict];
+    nextProvince = "lima";
+    if (!nextRegion) nextRegion = "lima";
+  }
+
+  return { region: nextRegion, province: nextProvince, district: nextDistrict };
+}
+
 function isLimaMetroDistrict(district) {
   if (!district) return false;
   const text = cleanDistrictText(district);
   if (!text) return false;
-
-  // 1) match exacto del string completo o de una abreviatura conocida.
   if (LIMA_METRO_DISTRICTS.has(text) || LIMA_METRO_TOKENS.has(text)) return true;
-
-  // 2) frase multi-palabra contenida en el texto (cliente pega direccion +
-  //    distrito, "lima/lima/X", referencias, etc.).
-  for (const phrase of LIMA_METRO_PHRASES) {
-    if (text.includes(phrase)) return true;
-  }
-
-  // 3) por token: palabra completa exacta, alias/anexo, o typo (Levenshtein).
+  for (const phrase of LIMA_METRO_PHRASES) if (text.includes(phrase)) return true;
   const tokens = text.split(" ").filter(Boolean);
   for (const tok of tokens) {
     if (LIMA_METRO_TOKENS.has(tok) || LIMA_METRO_DISTRICTS.has(tok)) return true;
     if (tok.length >= 5) {
       for (const word of LIMA_FUZZY_WORDS) {
         const maxDist = word.length >= 10 ? 2 : 1;
-        if (Math.abs(word.length - tok.length) > maxDist) continue;
-        if (levenshtein(tok, word) <= maxDist) return true;
+        if (Math.abs(word.length - tok.length) <= maxDist && levenshtein(tok, word) <= maxDist) return true;
       }
     }
   }
-
-  // 4) fuzzy del string completo contra nombres largos de >=2 palabras (typos en
-  //    "santiago de surc", "villa maria del trinfo"). Se limita a nombres de >=10
-  //    letras: los cortos ya los cubre el match por token y abrirlos a fuzzy
-  //    genera falsos positivos (p.ej. "barranca", provincia distinta, vs barranco).
   for (const known of LIMA_METRO_DISTRICTS) {
     if (known.length < 10) continue;
     const maxDist = known.length >= 12 ? 3 : 2;
-    if (Math.abs(known.length - text.length) > maxDist) continue;
-    if (levenshtein(text, known) <= maxDist) return true;
+    if (Math.abs(known.length - text.length) <= maxDist && levenshtein(text, known) <= maxDist) return true;
   }
-
   return false;
 }
 
-// Reconoce un distrito del Callao (provincia aparte de Lima) cuando el cliente
-// da solo el distrito sin la provincia. Todo el Callao tiene contraentrega.
 function isCallaoDistrict(district) {
   if (!district) return false;
   const text = cleanDistrictText(district);
   if (!text) return false;
   if (CALLAO_TOKENS.has(text)) return true;
-  for (const phrase of CALLAO_PHRASES) {
-    if (text.includes(phrase)) return true;
-  }
+  for (const phrase of CALLAO_PHRASES) if (text.includes(phrase)) return true;
   for (const tok of text.split(" ").filter(Boolean)) {
     if (CALLAO_TOKENS.has(tok)) return true;
     if (tok.length >= 5) {
       for (const word of CALLAO_FUZZY_WORDS) {
         const maxDist = word.length >= 10 ? 2 : 1;
-        if (Math.abs(word.length - tok.length) > maxDist) continue;
-        if (levenshtein(tok, word) <= maxDist) return true;
+        if (Math.abs(word.length - tok.length) <= maxDist && levenshtein(tok, word) <= maxDist) return true;
       }
     }
   }
   return false;
 }
 
-// Limpia el texto del distrito que escribe el cliente antes de compararlo:
-// elimina separadores tipo "Lima/Lima/X", viñetas y prefijos basura, numeros
-// sueltos, y colapsa abreviaturas deletreadas ("s j l" / "s.j.l" -> "sjl").
-// Asume entrada ya normalizada (minusculas, sin acentos) por normalizePlace.
 function cleanDistrictText(value) {
   let text = stripAccents(String(value || "").toLowerCase());
-  text = text.replace(/[^a-z0-9 ]+/g, " ");
-  text = text.replace(/\b\d+\b/g, " ");
-  text = text.replace(/\s+/g, " ").trim();
-  // Colapsar abreviaturas deletreadas DESPUES de unificar espacios, para que
-  // "s. j. l." (que deja doble espacio al quitar los puntos) tambien funcione.
+  text = text.replace(/[^a-z0-9 ]+/g, " ").replace(/\b\d+\b/g, " ").replace(/\s+/g, " ").trim();
   text = text.replace(/\b([a-z]) ([a-z]) ([a-z])\b/g, "$1$2$3");
   text = text.replace(/\b([a-z]) ([a-z])\b/g, "$1$2");
   return text.replace(/\s+/g, " ").trim();
@@ -551,10 +545,8 @@ function levenshtein(a, b) {
   const n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
-
   let prev = new Array(n + 1);
   for (let j = 0; j <= n; j += 1) prev[j] = j;
-
   for (let i = 1; i <= m; i += 1) {
     const cur = [i];
     for (let j = 1; j <= n; j += 1) {
@@ -589,26 +581,22 @@ function detectCourier(value) {
 
 function detectLocationInconsistency({ region, province, district }) {
   if (!district || !province) return null;
-
   const expected = DISTRICT_LOCATION_HINTS[district];
   if (!expected) return null;
-
   const provinceMismatch = province !== expected.province && province !== expected.region;
   const regionMismatch = region && region !== expected.region && region !== expected.province;
   if (!provinceMismatch && !regionMismatch) return null;
-
   const districtLabel = titleCasePlace(district);
   const provinceLabel = titleCasePlace(province);
   const expectedProvinceLabel = titleCasePlace(expected.province);
   const expectedRegionLabel = titleCasePlace(expected.region);
-
   return {
     suggested: expected,
     message: [
       "Solo para validar 😊",
       `Me indicaste distrito ${districtLabel} y provincia ${provinceLabel}, pero ${districtLabel} corresponde a ${expectedRegionLabel}.`,
-      `¿Lo registramos como ${expectedProvinceLabel}, ${expectedRegionLabel}?`,
-    ].join("\n"),
+      `¿Lo registramos como ${expectedProvinceLabel}, ${expectedRegionLabel}?`
+    ].join("\n")
   };
 }
 
@@ -625,9 +613,7 @@ function titleCasePlace(value) {
 }
 
 function unwrapInput(payload) {
-  if (payload?.input && typeof payload.input === "object" && !Array.isArray(payload.input)) {
-    return payload.input;
-  }
+  if (payload?.input && typeof payload.input === "object" && !Array.isArray(payload.input)) return payload.input;
   return payload || {};
 }
 
@@ -638,45 +624,31 @@ function stripAccents(value) {
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: { "Content-Type": "application/json; charset=utf-8" }
   });
 }
 
-// ============================================================================
-// Watchdog de clientes sin respuesta
-// Detecta conversaciones donde el CLIENTE hablo ultimo y el bot lleva >15 min
-// en silencio (agente colgado, error, etc.) y alerta al equipo por Telegram.
-// Se dispara aprovechando que el ladder de seguimientos invoca esta funcion
-// constantemente; una compuerta en KV limita el barrido a 1 vez cada 10 min.
-// Credenciales: env/globalThis (runtime_config) con fallback a KV del proyecto.
-// ============================================================================
-
-const WATCHDOG_SWEEP_INTERVAL_MS = 10 * 60 * 1000;   // min entre barridos
-const WATCHDOG_MIN_SILENCE_MS = 15 * 60 * 1000;      // cliente esperando >15 min
-const WATCHDOG_MAX_SILENCE_MS = 6 * 60 * 60 * 1000;  // ignorar silencios >6h (viejos)
-const WATCHDOG_ALERT_TTL_S = 6 * 60 * 60;            // no re-alertar la misma conversacion por 6h
+const WATCHDOG_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+const WATCHDOG_MIN_SILENCE_MS = 15 * 60 * 1000;
+const WATCHDOG_MAX_SILENCE_MS = 6 * 60 * 60 * 1000;
+const WATCHDOG_ALERT_TTL_S = 6 * 60 * 60;
 const WATCHDOG_PHONE_IDS = ["1241790819006805", "1022274334303691"];
 const WATCHDOG_MAX_ALERTS = 6;
-
-// Mensajes de cierre triviales del cliente que NO requieren respuesta del bot:
-// si TODAS las palabras del mensaje estan en esta lista, no se alerta
-// ("ok gracias", "no srta gracias", "ya listo", "buenas noches", etc.).
 const WATCHDOG_TRIVIAL_WORDS = new Set([
-  "ok", "okey", "oki", "okis", "ya", "listo", "lista", "gracias", "gracias",
-  "muchas", "mil", "si", "no", "buenas", "buenos", "noches", "dias", "dia",
-  "buen", "buena", "tardes", "de", "nada", "senorita", "srta", "joven", "esta",
-  "bien", "vale", "perfecto", "entendido", "amable", "muy",
+  "ok", "okey", "oki", "okis", "ya", "listo", "lista", "gracias", "muchas",
+  "mil", "si", "no", "buenas", "buenos", "noches", "dias", "dia", "buen",
+  "buena", "tardes", "de", "nada", "senorita", "srta", "joven", "esta",
+  "bien", "vale", "perfecto", "entendido", "amable", "muy"
 ]);
 
 function watchdogIsTrivial(text) {
   const clean = String(text || "")
     .toLowerCase()
-    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z\s]/g, " ")
     .trim();
-  if (!clean) return true; // solo emojis/signos: no necesita rescate
-  const words = clean.split(/\s+/);
-  return words.every((w) => WATCHDOG_TRIVIAL_WORDS.has(w));
+  if (!clean) return true;
+  return clean.split(/\s+/).every((w) => WATCHDOG_TRIVIAL_WORDS.has(w));
 }
 
 async function watchdogConfig(env) {
@@ -685,20 +657,19 @@ async function watchdogConfig(env) {
     kapsoApiKey: g("KAPSO_API_KEY", "kAPSOAPIKEY"),
     kapsoApiBase: g("KAPSO_API_BASE", "kAPSOAPIBASE") || "https://api.kapso.ai",
     telegramToken: g("TELEGRAM_BOT_TOKEN", "tELEGRAMBOTTOKEN"),
-    telegramChatId: g("TELEGRAM_CHAT_ID", "tELEGRAMCHATID"),
+    telegramChatId: g("TELEGRAM_CHAT_ID", "tELEGRAMCHATID")
   };
-  // Fallback a KV del proyecto (mismo patron que create-shopify-order).
   if (env?.KV && (!cfg.kapsoApiKey || !cfg.telegramToken || !cfg.telegramChatId)) {
     try {
       const [k, t, c] = await Promise.all([
         cfg.kapsoApiKey ? null : env.KV.get("KAPSO_API_KEY"),
         cfg.telegramToken ? null : env.KV.get("TELEGRAM_BOT_TOKEN"),
-        cfg.telegramChatId ? null : env.KV.get("TELEGRAM_CHAT_ID"),
+        cfg.telegramChatId ? null : env.KV.get("TELEGRAM_CHAT_ID")
       ]);
       cfg.kapsoApiKey = cfg.kapsoApiKey || k;
       cfg.telegramToken = cfg.telegramToken || t;
       cfg.telegramChatId = cfg.telegramChatId || c;
-    } catch { /* sin KV: seguimos con lo que haya */ }
+    } catch {}
   }
   return cfg;
 }
@@ -706,32 +677,24 @@ async function watchdogConfig(env) {
 async function maybeRunWatchdog(env, { force = false } = {}) {
   if (!env?.KV) return { ran: false, reason: "no_kv" };
   if (!force && isQuietHourPeru()) return { ran: false, reason: "quiet_hours" };
-
   const now = Date.now();
   if (!force) {
     const last = Number(await env.KV.get("watchdog:last_sweep") || 0);
     if (now - last < WATCHDOG_SWEEP_INTERVAL_MS) return { ran: false, reason: "gated" };
   }
-  // Cerrar la compuerta ANTES de barrer para evitar dobles barridos concurrentes.
   await env.KV.put("watchdog:last_sweep", String(now), { expirationTtl: 3600 });
-
   const cfg = await watchdogConfig(env);
-  if (!cfg.kapsoApiKey || !cfg.telegramToken || !cfg.telegramChatId) {
-    return { ran: false, reason: "missing_credentials" };
-  }
+  if (!cfg.kapsoApiKey || !cfg.telegramToken || !cfg.telegramChatId) return { ran: false, reason: "missing_credentials" };
   return watchdogSweep(cfg, env, now);
 }
 
 async function watchdogSweep(cfg, env, now) {
   const sinceIso = new Date(now - WATCHDOG_MAX_SILENCE_MS).toISOString();
   const candidates = [];
-
   for (const phoneId of WATCHDOG_PHONE_IDS) {
     let cursor = null;
     for (let page = 0; page < 3; page += 1) {
-      let url = `${cfg.kapsoApiBase}/platform/v1/whatsapp/conversations`
-        + `?phone_number_id=${encodeURIComponent(phoneId)}&status=active`
-        + `&last_active_after=${encodeURIComponent(sinceIso)}&limit=100`;
+      let url = `${cfg.kapsoApiBase}/platform/v1/whatsapp/conversations?phone_number_id=${encodeURIComponent(phoneId)}&status=active&last_active_after=${encodeURIComponent(sinceIso)}&limit=100`;
       if (cursor) url += `&after=${encodeURIComponent(cursor)}`;
       let payload;
       try {
@@ -745,28 +708,19 @@ async function watchdogSweep(cfg, env, now) {
         const lastIn = Date.parse(k.last_inbound_at || "");
         const lastOut = Date.parse(k.last_outbound_at || "");
         if (!Number.isFinite(lastIn)) continue;
-        if (Number.isFinite(lastOut) && lastOut >= lastIn) continue; // el bot ya respondio
+        if (Number.isFinite(lastOut) && lastOut >= lastIn) continue;
         const silence = now - lastIn;
         if (silence < WATCHDOG_MIN_SILENCE_MS || silence > WATCHDOG_MAX_SILENCE_MS) continue;
-
         const text = String(k.last_message_text || "").trim();
-        if (/^Reacted with /i.test(text)) continue;          // reaccion de emoji
-        if (watchdogIsTrivial(text)) continue;               // "ok gracias" no necesita rescate
-
-        candidates.push({
-          id: convo.id,
-          name: k.contact_name || convo.phone_number || "?",
-          phone: convo.phone_number || "",
-          minutes: Math.round(silence / 60000),
-          text: text.slice(0, 80),
-        });
+        if (/^Reacted with /i.test(text)) continue;
+        if (watchdogIsTrivial(text)) continue;
+        candidates.push({ id: convo.id, name: k.contact_name || convo.phone_number || "?", phone: convo.phone_number || "", minutes: Math.round(silence / 60000), text: text.slice(0, 80) });
       }
       cursor = payload?.paging?.cursors?.after || null;
       if (!cursor || !(payload?.data || []).length) break;
     }
   }
 
-  // Dedupe: alertar cada conversacion una sola vez por ventana de 6h.
   const fresh = [];
   for (const c of candidates) {
     const key = `watchdog:alerted:${c.id}`;
@@ -775,7 +729,6 @@ async function watchdogSweep(cfg, env, now) {
     await env.KV.put(key, "1", { expirationTtl: WATCHDOG_ALERT_TTL_S });
     if (fresh.length >= WATCHDOG_MAX_ALERTS) break;
   }
-
   if (fresh.length === 0) return { ran: true, candidates: candidates.length, alerted: 0 };
 
   const lines = fresh.map((c) => `• *${c.name}* (+${c.phone}) — ${c.minutes} min esperando\n  _"${c.text}"_`);
@@ -784,17 +737,12 @@ async function watchdogSweep(cfg, env, now) {
     await fetch(`https://api.telegram.org/bot${cfg.telegramToken}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: cfg.telegramChatId, text, parse_mode: "Markdown" }),
+      body: JSON.stringify({ chat_id: cfg.telegramChatId, text, parse_mode: "Markdown" })
     });
-  } catch { /* Telegram caido: el dedupe TTL hara que se reintente luego */ }
-
+  } catch {}
   return { ran: true, candidates: candidates.length, alerted: fresh.length };
 }
 
-// Administracion por invocacion directa (privada, requiere X-API-Key de Kapso):
-// - watchdogSeed: {watchdogSeed:{KAPSO_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID}} guarda en KV.
-// - watchdogDebug: reporta que credenciales estan visibles (booleans, sin valores).
-// - forceSweep: corre un barrido ignorando compuerta y horario (para probar).
 async function watchdogAdmin(payload, env) {
   if (payload.watchdogSeed && typeof payload.watchdogSeed === "object") {
     if (!env?.KV) return json({ ok: false, reason: "no_kv" });
@@ -814,20 +762,14 @@ async function watchdogAdmin(payload, env) {
     return json({ ok: true, ...result });
   }
   const cfg = await watchdogConfig(env);
-  return json({
-    ok: true,
-    kv: Boolean(env?.KV),
-    kapsoApiKey: Boolean(cfg.kapsoApiKey),
-    telegramToken: Boolean(cfg.telegramToken),
-    telegramChatId: Boolean(cfg.telegramChatId),
-    quietHours: isQuietHourPeru(),
-  });
+  return json({ ok: true, kv: Boolean(env?.KV), kapsoApiKey: Boolean(cfg.kapsoApiKey), telegramToken: Boolean(cfg.telegramToken), telegramChatId: Boolean(cfg.telegramChatId), quietHours: isQuietHourPeru() });
 }
 
 globalThis.__aurelaCheckCoverage = {
   maybeRunWatchdog,
   watchdogSweep,
   watchdogConfig,
+  canonicalizeLimaPlace,
   cleanDistrictText,
   detectCourier,
   detectLocationInconsistency,
@@ -838,5 +780,6 @@ globalThis.__aurelaCheckCoverage = {
   isCallaoDistrict,
   isLimaMetroDistrict,
   levenshtein,
-  normalizePlace,
+  normalizeLimaLocation,
+  normalizePlace
 };

@@ -1,3 +1,7 @@
+async function handler(request, env) {
+  return handleRequest(request, env);
+}
+
 const DEFAULT_PUBLIC_SHOP_DOMAIN = "aurela.pe";
 const DEFAULT_ADMIN_SHOP_DOMAIN = "aurela-peru.myshopify.com";
 const DEFAULT_ADMIN_API_VERSION = "2026-04";
@@ -28,51 +32,20 @@ const STOPWORDS = new Set([
   "videos",
 ]);
 
-// Synonyms so customer terms match catalog wording (e.g. "medias" == "calcetines" in Peru).
 const SYNONYM_GROUPS = [
   ["medias", "media", "calcetines", "calcetin", "calceta", "calcetas", "soquetes", "soquete"],
 ];
 
 const SYNONYM_MAP = buildSynonymMap(SYNONYM_GROUPS);
 
-function buildSynonymMap(groups) {
-  const map = new Map();
-  for (const group of groups) {
-    const normalized = [...new Set(group.map((word) => normalizeSearchText(word)).filter(Boolean))];
-    for (const word of normalized) {
-      const set = map.get(word) || new Set();
-      normalized.forEach((other) => set.add(other));
-      map.set(word, set);
-    }
-  }
-  return map;
-}
-
-function tokenVariants(token) {
-  const set = SYNONYM_MAP.get(token);
-  return set ? [...set] : [token];
-}
-
-function searchableHasToken(searchable, token) {
-  return tokenVariants(token).some((variant) => variant && searchable.includes(variant));
-}
-
-async function handler(request, env = globalThis) {
-  return handleRequest(request, env);
-}
-
-if (typeof addEventListener === "function") {
-  addEventListener("fetch", (event) => {
-    event.respondWith(handleRequest(event.request, globalThis));
-  });
-}
-
-async function handleRequest(request, env = globalThis) {
+async function handleRequest(request, env = {}) {
   try {
     const input = await readJson(request);
-    const config = getConfig(env);
+    const config = await getConfig(env);
     const root = isPlainObject(input.input) ? input.input : input;
     const queryText = collectInputText(input);
+    const contextText = collectContextText(input);
+    const requestText = [queryText, contextText].filter(Boolean).join(" ").trim();
     const handles = extractHandleCandidates(queryText);
     const requestedVariant = collectVariantText(root);
     const limit = clamp(Number(root.limit || input.limit || 6) || 6, 1, 10);
@@ -101,21 +74,17 @@ async function handleRequest(request, env = globalThis) {
 
     const photos = buildMediaItems(product, { limit, requestedVariant });
 
-    // El cliente pidio video: intentamos resolver el metacampo custom.video
-    // (referencia a archivo). Si no hay token admin o el producto no tiene video,
-    // seguimos con las fotos sin romper el flujo.
-    const wantVideoDebug = /videodebug/i.test(queryText);
-    const videoRequested = detectVideoRequest(queryText, root) || wantVideoDebug;
+    const wantVideoDebug = /videodebug/i.test(requestText);
+    const videoRequested = detectVideoRequest(requestText, root) || wantVideoDebug;
     let videoItem = null;
     let videoDebug = null;
+
     if (videoRequested) {
       const vres = await fetchProductVideo(config, product);
       videoItem = vres.item;
       videoDebug = vres.debug;
     }
 
-    // Modo diagnostico oculto (mensaje contiene "videodebug"): no envia media,
-    // hace que el bot responda con el detalle tecnico para depurar el video.
     if (wantVideoDebug) {
       return json({
         ok: true,
@@ -187,30 +156,48 @@ async function readJson(request) {
   }
 }
 
-function getConfig(env = globalThis) {
+async function getConfig(env = {}) {
+  const kvConfig = await getKvConfig(env);
   const publicShopDomain =
     env.SHOPIFY_PUBLIC_SHOP_DOMAIN ||
     env.sHOPIFYPUBLICSHOPDOMAIN ||
+    kvConfig.SHOPIFY_PUBLIC_SHOP_DOMAIN ||
     globalThis.SHOPIFY_PUBLIC_SHOP_DOMAIN ||
     globalThis.sHOPIFYPUBLICSHOPDOMAIN ||
     DEFAULT_PUBLIC_SHOP_DOMAIN;
 
-  // Credenciales Admin (mismas que create-shopify-order) para leer el metacampo
-  // custom.video, que NO viene en el products.json publico. Opcionales: si no
-  // estan configuradas, la funcion sigue devolviendo solo fotos.
   const adminShopDomain =
     env.SHOPIFY_SHOP_DOMAIN || env.sHOPIFYSHOPDOMAIN ||
+    kvConfig.SHOPIFY_SHOP_DOMAIN ||
     globalThis.SHOPIFY_SHOP_DOMAIN || globalThis.sHOPIFYSHOPDOMAIN ||
     DEFAULT_ADMIN_SHOP_DOMAIN;
   const adminApiVersion =
     env.SHOPIFY_API_VERSION || env.sHOPIFYAPIVERSION ||
+    kvConfig.SHOPIFY_API_VERSION ||
     globalThis.SHOPIFY_API_VERSION || globalThis.sHOPIFYAPIVERSION ||
     DEFAULT_ADMIN_API_VERSION;
   const adminToken =
     env.SHOPIFY_ADMIN_ACCESS_TOKEN || env.sHOPIFYADMINACCESSTOKEN ||
+    kvConfig.SHOPIFY_ADMIN_ACCESS_TOKEN ||
     globalThis.SHOPIFY_ADMIN_ACCESS_TOKEN || globalThis.sHOPIFYADMINACCESSTOKEN || "";
 
   return { publicShopDomain, adminShopDomain, adminApiVersion, adminToken };
+}
+
+async function getKvConfig(env) {
+  if (!env?.KV?.get) return {};
+  const [token, apiVersion, shopDomain, publicShopDomain] = await Promise.all([
+    env.KV.get("SHOPIFY_ADMIN_ACCESS_TOKEN"),
+    env.KV.get("SHOPIFY_API_VERSION"),
+    env.KV.get("SHOPIFY_SHOP_DOMAIN"),
+    env.KV.get("SHOPIFY_PUBLIC_SHOP_DOMAIN"),
+  ]);
+  return {
+    SHOPIFY_ADMIN_ACCESS_TOKEN: token,
+    SHOPIFY_API_VERSION: apiVersion,
+    SHOPIFY_SHOP_DOMAIN: shopDomain,
+    SHOPIFY_PUBLIC_SHOP_DOMAIN: publicShopDomain,
+  };
 }
 
 function collectInputText(input) {
@@ -246,6 +233,18 @@ function collectInputText(input) {
 
   if (direct.length > 0) return uniquePreserveCase(direct).join(" ");
   return collectStrings(input).join(" ").trim();
+}
+
+function collectContextText(input) {
+  const vars = input?.execution_context?.vars || {};
+  const messages = input?.whatsapp_context?.messages || [];
+  const lastInbound = [...messages].reverse().find((message) => message.direction === "inbound");
+  return [
+    vars.last_user_input,
+    lastInbound?.content,
+    lastInbound?.metadata?.raw_message?.referral?.headline,
+    lastInbound?.metadata?.raw_message?.referral?.body,
+  ].filter((value) => typeof value === "string" && value.trim()).join(" ");
 }
 
 function collectVariantText(root) {
@@ -372,7 +371,7 @@ async function loadPublicCatalog(config) {
 function publicHeaders() {
   return {
     "Accept": "application/json",
-    "User-Agent": "Aurela-Kapso-Media-Lookup/1.0",
+    "User-Agent": "Aurela-Kapso-Media-Lookup/1.1",
   };
 }
 
@@ -454,7 +453,7 @@ function buildMediaItems(product, options) {
   const seenUrls = new Set();
 
   for (const variant of product.variants || []) {
-    const url = normalizeImageUrl(
+    const url = normalizeMediaUrl(
       variant.featured_image?.src ||
       variant.featured_image ||
       variant.image ||
@@ -467,7 +466,7 @@ function buildMediaItems(product, options) {
     if (requestedTokens.length > 0 && !requestedTokens.every((token) => searchable.includes(token))) continue;
 
     seenUrls.add(url);
-    items.push(mediaItem(product, label, url));
+    items.push(imageItem(product, label, url));
     if (items.length >= limit) return items;
   }
 
@@ -476,22 +475,22 @@ function buildMediaItems(product, options) {
   }
 
   for (const image of product.images || []) {
-    const url = normalizeImageUrl(image?.src || image);
+    const url = normalizeMediaUrl(image?.src || image);
     if (!url || seenUrls.has(url)) continue;
     seenUrls.add(url);
-    items.push(mediaItem(product, `Foto ${items.length + 1}`, url));
+    items.push(imageItem(product, `Foto ${items.length + 1}`, url));
     if (items.length >= limit) return items;
   }
 
-  const featured = normalizeImageUrl(product.featured_image || product.image?.src);
+  const featured = normalizeMediaUrl(product.featured_image || product.image?.src);
   if (featured && !seenUrls.has(featured) && items.length < limit) {
-    items.push(mediaItem(product, "Principal", featured));
+    items.push(imageItem(product, "Principal", featured));
   }
 
   return items.slice(0, limit);
 }
 
-function mediaItem(product, label, url) {
+function imageItem(product, label, url) {
   const safeLabel = label && normalizeSearchText(label) !== "default title" ? label : "Foto";
   return {
     mediaType: "image",
@@ -580,7 +579,7 @@ function normalizeTags(tags) {
   return [];
 }
 
-function normalizeImageUrl(value) {
+function normalizeMediaUrl(value) {
   if (!value) return "";
   const text = String(value);
   if (text.startsWith("//")) return `https:${text}`;
@@ -631,83 +630,165 @@ function detectVideoRequest(queryText, root) {
   return /\bvideos?\b/i.test(String(queryText || ""));
 }
 
-// Lee el metacampo custom.video (referencia a archivo Video) del producto via
-// Admin API. Devuelve { item, debug }: item es el media listo para send_media (o
-// null), y debug explica por que no se resolvio (para el modo diagnostico).
 async function fetchProductVideo(config, product) {
+  const productGid = toProductGid(product?.id);
   const debug = {
     tokenPresent: Boolean(config.adminToken),
     productId: product?.id || null,
+    productGid: productGid || null,
+    source: null,
+    productMediaChecked: false,
+    productMediaCount: 0,
+    productMediaVideoCount: 0,
+    productMediaSourcesCount: 0,
+    metafieldChecked: false,
     metafieldPresent: false,
     metafieldType: null,
     referenceType: null,
     fileStatus: null,
     sourcesCount: 0,
     urlPicked: false,
-    error: null,
+    errors: [],
   };
-  if (!config.adminToken || !product?.id) return { item: null, debug };
+
+  if (!config.adminToken || !productGid) return { item: null, debug };
 
   try {
-    const query = `#graphql
-      query ProductVideo($id: ID!, $ns: String!, $key: String!) {
-        product(id: $id) {
-          metafield(namespace: $ns, key: $key) {
-            type
-            reference {
-              __typename
-              ... on Video { fileStatus sources { url mimeType format height width } }
-              ... on GenericFile { url mimeType }
-              ... on MediaImage { image { url } }
+    const media = await fetchProductMediaVideo(config, productGid);
+    debug.productMediaChecked = true;
+    debug.productMediaCount = media.count;
+    debug.productMediaVideoCount = media.videoCount;
+    debug.productMediaSourcesCount = media.sourcesCount;
+    if (media.item) {
+      debug.source = "product.media";
+      debug.urlPicked = true;
+      return { item: videoItem(product, media.item.url, media.item.mimeType, "product.media"), debug };
+    }
+  } catch (error) {
+    debug.productMediaChecked = true;
+    debug.errors.push(`product.media: ${safeError(error)}`);
+  }
+
+  try {
+    const metafield = await fetchMetafieldVideo(config, productGid);
+    debug.metafieldChecked = true;
+    debug.metafieldPresent = metafield.metafieldPresent;
+    debug.metafieldType = metafield.metafieldType;
+    debug.referenceType = metafield.referenceType;
+    debug.fileStatus = metafield.fileStatus;
+    debug.sourcesCount = metafield.sourcesCount;
+    if (metafield.item) {
+      debug.source = "custom.video";
+      debug.urlPicked = true;
+      return { item: videoItem(product, metafield.item.url, metafield.item.mimeType, "custom.video"), debug };
+    }
+  } catch (error) {
+    debug.metafieldChecked = true;
+    debug.errors.push(`custom.video: ${safeError(error)}`);
+  }
+
+  return { item: null, debug };
+}
+
+async function fetchProductMediaVideo(config, productGid) {
+  const query = `#graphql
+    query ProductMediaVideos($id: ID!) {
+      product(id: $id) {
+        media(first: 50) {
+          nodes {
+            __typename
+            ... on Video {
+              sources { url mimeType format height width }
             }
           }
         }
-      }`;
-    const data = await shopifyAdminGraphql(config, query, {
-      id: `gid://shopify/Product/${product.id}`,
-      ns: VIDEO_METAFIELD_NAMESPACE,
-      key: VIDEO_METAFIELD_KEY,
-    });
-    const mf = data?.product?.metafield;
-    debug.metafieldPresent = Boolean(mf);
-    debug.metafieldType = mf?.type || null;
-    const ref = mf?.reference;
-    if (!ref) return { item: null, debug };
-    debug.referenceType = ref.__typename || null;
+      }
+    }`;
+  const data = await shopifyAdminGraphql(config, query, { id: productGid });
+  const nodes = data?.product?.media?.nodes || [];
+  let videoCount = 0;
+  let sourcesCount = 0;
 
-    let url = "";
-    let mimeType = "video/mp4";
-    if (ref.__typename === "Video") {
-      debug.fileStatus = ref.fileStatus || null;
-      const sources = Array.isArray(ref.sources) ? ref.sources : [];
-      debug.sourcesCount = sources.length;
-      const src = pickVideoSource(sources);
-      if (src) { url = src.url; mimeType = src.mimeType || mimeType; }
-    } else if (ref.__typename === "GenericFile" && ref.url) {
-      url = ref.url;
-      mimeType = ref.mimeType || mimeType;
-    }
-
-    url = normalizeImageUrl(url);
-    debug.urlPicked = Boolean(url);
-    if (!url) return { item: null, debug };
-    return { item: videoItem(product, url, mimeType), debug };
-  } catch (error) {
-    debug.error = error instanceof Error ? error.message : String(error);
-    return { item: null, debug };
+  for (const node of nodes) {
+    const sources = Array.isArray(node?.sources) ? node.sources : [];
+    if (node?.__typename === "Video" || sources.length > 0) videoCount += 1;
+    sourcesCount += sources.length;
+    const src = pickVideoSource(sources);
+    if (src) return {
+      count: nodes.length,
+      videoCount,
+      sourcesCount,
+      item: { url: normalizeMediaUrl(src.url), mimeType: src.mimeType || "video/mp4" },
+    };
   }
+
+  return { count: nodes.length, videoCount, sourcesCount, item: null };
 }
 
-// Elige la fuente mp4 mas liviana (menor altura) para no pasar el limite de
-// 16MB de WhatsApp; cae a la primera fuente con url si faltan metadatos.
+async function fetchMetafieldVideo(config, productGid) {
+  const query = `#graphql
+    query ProductVideoMetafield($id: ID!, $ns: String!, $key: String!) {
+      product(id: $id) {
+        metafield(namespace: $ns, key: $key) {
+          type
+          reference {
+            __typename
+            ... on Video { fileStatus sources { url mimeType format height width } }
+            ... on GenericFile { url mimeType }
+            ... on MediaImage { image { url } }
+          }
+        }
+      }
+    }`;
+  const data = await shopifyAdminGraphql(config, query, {
+    id: productGid,
+    ns: VIDEO_METAFIELD_NAMESPACE,
+    key: VIDEO_METAFIELD_KEY,
+  });
+
+  const mf = data?.product?.metafield;
+  const ref = mf?.reference;
+  const result = {
+    metafieldPresent: Boolean(mf),
+    metafieldType: mf?.type || null,
+    referenceType: ref?.__typename || null,
+    fileStatus: null,
+    sourcesCount: 0,
+    item: null,
+  };
+
+  if (!ref) return result;
+
+  let url = "";
+  let mimeType = "video/mp4";
+  if (ref.__typename === "Video") {
+    result.fileStatus = ref.fileStatus || null;
+    const sources = Array.isArray(ref.sources) ? ref.sources : [];
+    result.sourcesCount = sources.length;
+    const src = pickVideoSource(sources);
+    if (src) {
+      url = src.url;
+      mimeType = src.mimeType || mimeType;
+    }
+  } else if (ref.__typename === "GenericFile" && ref.url) {
+    url = ref.url;
+    mimeType = ref.mimeType || mimeType;
+  }
+
+  url = normalizeMediaUrl(url);
+  if (url) result.item = { url, mimeType };
+  return result;
+}
+
 function pickVideoSource(sources) {
-  const mp4 = sources.filter((s) => s && s.url && (/mp4/i.test(s.mimeType || "") || /mp4/i.test(s.format || "")));
-  const pool = mp4.length ? mp4 : sources.filter((s) => s && s.url);
+  const valid = (Array.isArray(sources) ? sources : []).filter((source) => source && source.url);
+  const mp4 = valid.filter((source) => /mp4/i.test(source.mimeType || "") || /mp4/i.test(source.format || "") || /\.mp4(\?|$)/i.test(source.url || ""));
+  const pool = mp4.length ? mp4 : valid;
   if (pool.length === 0) return null;
   return pool.slice().sort((a, b) => (Number(a.height) || 1e9) - (Number(b.height) || 1e9))[0];
 }
 
-function videoItem(product, url, mimeType) {
+function videoItem(product, url, mimeType, source) {
   return {
     mediaType: "video",
     type: "video",
@@ -716,7 +797,16 @@ function videoItem(product, url, mimeType) {
     url,
     mediaUrl: url,
     mimeType: mimeType || "video/mp4",
+    source,
   };
+}
+
+function toProductGid(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.startsWith("gid://shopify/Product/")) return text;
+  const match = text.match(/(\d+)$/);
+  return match ? `gid://shopify/Product/${match[1]}` : "";
 }
 
 async function shopifyAdminGraphql(config, query, variables) {
@@ -737,6 +827,28 @@ async function shopifyAdminGraphql(config, query, variables) {
   return payload.data;
 }
 
+function buildSynonymMap(groups) {
+  const map = new Map();
+  for (const group of groups) {
+    const normalized = [...new Set(group.map((word) => normalizeSearchText(word)).filter(Boolean))];
+    for (const word of normalized) {
+      const set = map.get(word) || new Set();
+      normalized.forEach((other) => set.add(other));
+      map.set(word, set);
+    }
+  }
+  return map;
+}
+
+function tokenVariants(token) {
+  const set = SYNONYM_MAP.get(token);
+  return set ? [...set] : [token];
+}
+
+function searchableHasToken(searchable, token) {
+  return tokenVariants(token).some((variant) => variant && searchable.includes(variant));
+}
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -748,6 +860,7 @@ globalThis.__aurelaProductMediaLookup = {
   buildMediaItems,
   detectVideoRequest,
   fetchProductVideo,
+  getConfig,
   handleRequest,
   handler,
   pickVideoSource,

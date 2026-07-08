@@ -102,6 +102,40 @@ const PRODUCT_STOPWORDS = new Set([
   "rosada",
   "rosado",
   "verde",
+  // Saludo/cortesia e intencion (relleno conversacional que no es producto).
+  "buenas",
+  "buenos",
+  "dias",
+  "tardes",
+  "noches",
+  "gracias",
+  "favor",
+  "porfavor",
+  "porfa",
+  "dime",
+  "necesito",
+  "quisiera",
+  // Logistica/envio: los clientes preguntan envio + producto en un mismo mensaje.
+  // Estas palabras no deben "envenenar" la busqueda del producto nombrado.
+  "hacen",
+  "hace",
+  "envio",
+  "envios",
+  "enviar",
+  "envian",
+  "envia",
+  "manda",
+  "mandan",
+  "mandar",
+  "delivery",
+  "reparto",
+  "provincia",
+  "provincias",
+  "ciudad",
+  "distrito",
+  "region",
+  "llega",
+  "llegan",
 ]);
 
 const CATEGORY_RULES = [
@@ -1623,6 +1657,11 @@ function normalizeSearchText(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[\u2122\u00ae\u00a9]/g, "")
+    // Separa fronteras digito-letra para que "2en1", "3en1", "2x1", "300g"
+    // no queden como un token pegado que no matchea (ej. "pelador 2en1" ->
+    // "pelador 2 en 1"). Simetrico: se aplica igual a la query y al catalogo.
+    .replace(/(\d)([a-z])/g, "$1 $2")
+    .replace(/([a-z])(\d)/g, "$1 $2")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();

@@ -332,7 +332,7 @@ Reglas comerciales:
 - Si el pedido queda en S/40 o menos, envio S/10.
 - Lima Metropolitana: entrega en 24 horas (a veces el mismo dia), normalmente de 10am a 6pm; domingos no hay reparto. Hay un motorizado que reparte hasta las 8pm, por lo que el rango de 6pm a 8pm es POSIBLE pero NO garantizado: si el cliente lo pide, dile que haremos el mejor esfuerzo y deja una nota en el pedido; no lo prometas como seguro.
 - Provincias: 2 a 4 dias.
-- Contraentrega: paga al recibir en efectivo o Yape.
+- Contraentrega: paga al recibir. MEDIOS DE PAGO ACEPTADOS EN CONTRAENTREGA (todos habilitados): efectivo, tarjeta de credito y debito, Yape, Plin y transferencia bancaria. Lo mas comun es efectivo y Yape, pero los demas estan disponibles. Si el cliente pregunta por tarjeta, Plin o transferencia, responde que SI se aceptan al recibir (NUNCA digas que solo hay efectivo/Yape ni lo mandes a la web por el medio de pago). Ejemplo si pregunta por tarjeta: "¡Claro! En contraentrega puedes pagar al recibir con *tarjeta* (crédito o débito), y también efectivo, Yape, Plin o transferencia 😊".
 - Shalom: agencia/oficina Shalom de destino obligatoria, adelanto S/30, saldo al recoger, DNI obligatorio del titular que recogera, voucher/captura antes de confirmar. No se pide direccion exacta ni referencia de domicilio.
 - Olva Courier: pago completo anticipado por Yape a Grupo GF SAC, 930 555 309, direccion exacta obligatoria, voucher/captura o confirmacion de pago antes de confirmar.
 - Si el cliente pide fecha u hora especial, crea la orden igual y deja la nota en el campo specialDeliveryNote de create_shopify_order.
@@ -397,7 +397,7 @@ Resumen corto antes de crear orden (contraentrega):
 *Total:* S/ [total] (envio [gratis / S/ 10])
 *Entrega:* [distrito], [provincia] - [direccion + referencia]
 *Contacto:* [telefono de WhatsApp confirmado]
-*Pago:* Contraentrega (efectivo o Yape)
+*Pago:* Contraentrega (al recibir: efectivo, Yape, tarjeta, Plin o transferencia)
 
 Confirmas y registro tu pedido?"
 

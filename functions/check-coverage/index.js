@@ -237,7 +237,7 @@ async function handleRequest(request, env = globalThis) {
   }
 
   if (Array.isArray(payload.available_edges)) {
-    const routed = routeFollowup(payload);
+    const routed = await routeFollowup(payload, env);
     try { await maybeRunWatchdog(env); } catch {}
     return routed;
   }
@@ -362,7 +362,77 @@ const FOLLOWUP_TERMINAL_MARKERS = [
   "derivad", "no_interes", "no interes", "reclamo", "molesto", "cancel"
 ];
 
-function routeFollowup(payload) {
+// Freno de recordatorios por NUMERO (cross-conversacion): si un cliente tiene
+// varias conversaciones abiertas, cada una corre su propia escalera y lo
+// "revienta" con recordatorios paralelos. Modelo de titularidad: una sola
+// conversacion "duena" manda los recordatorios de ese numero; las demas se
+// suprimen (ruta "esperar") mientras la duena siga activa. La titularidad se
+// renueva con cada envio y caduca tras FU_OWNER_WINDOW_MS de silencio (cubre el
+// gap maximo del ladder, 16h->23h = 7h), asi la duena la conserva toda su
+// escalera. Si no viene id de conversacion, cae a un anti-rafaga corto por
+// numero (evita textos simultaneos sin alterar la cadencia de una sola).
+const FU_OWNER_WINDOW_MS = 8 * 60 * 60 * 1000; // 8 h
+const FU_BURST_MS = 10 * 60 * 1000;            // 10 min (respaldo sin id)
+const FU_OWNER_TTL_S = 30 * 60 * 60;           // 30 h
+
+function extractCustomerPhone(payload, ctx) {
+  const c = isPlainObject(ctx.context) ? ctx.context : {};
+  let phone = c.phone_number || c.phone || "";
+  if (!phone) {
+    const msgs = (payload.whatsapp_context && Array.isArray(payload.whatsapp_context.messages)) ? payload.whatsapp_context.messages : [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i] || {};
+      const dir = m.direction || (m.kapso && m.kapso.direction);
+      if (dir === "inbound" && (m.from || m.phone_number)) { phone = m.from || m.phone_number; break; }
+    }
+  }
+  return String(phone || "").replace(/[^\d]/g, "");
+}
+
+function extractConversationId(payload, ctx) {
+  const c = isPlainObject(ctx.context) ? ctx.context : {};
+  const sys = isPlainObject(ctx.system) ? ctx.system : {};
+  const cands = [
+    c.conversation_id, c.whatsapp_conversation_id, c.conversationId,
+    sys.conversation_id, sys.execution_id, sys.flow_execution_id, sys.executionId,
+    ctx.conversation_id, ctx.execution_id,
+    payload.conversation_id, payload.execution_id,
+  ];
+  for (const v of cands) { if (v && typeof v === "string") return v; }
+  const msgs = (payload.whatsapp_context && Array.isArray(payload.whatsapp_context.messages)) ? payload.whatsapp_context.messages : [];
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    const m = msgs[i] || {};
+    const id = (m.kapso && m.kapso.whatsapp_conversation_id) || m.whatsapp_conversation_id;
+    if (id) return String(id);
+  }
+  return "";
+}
+
+async function followupThrottleAllows(env, phone, convId, nowMs) {
+  if (!env || !env.KV || !phone) return true; // sin KV/telefono: no frenar (comportamiento previo)
+  const key = `fu_owner:${phone}`;
+  try {
+    const raw = await env.KV.get(key);
+    let owner = null;
+    if (raw) { try { owner = JSON.parse(raw); } catch { owner = null; } }
+    const fresh = Boolean(owner && owner.ts && (nowMs - Number(owner.ts)) <= FU_OWNER_WINDOW_MS);
+    if (convId) {
+      // Otra conversacion es la duena y sigue activa -> suprimir esta.
+      if (fresh && owner.cid && owner.cid !== convId) return false;
+      await env.KV.put(key, JSON.stringify({ cid: convId, ts: nowMs }), { expirationTtl: FU_OWNER_TTL_S });
+      return true;
+    }
+    // Sin id de conversacion: anti-rafaga (no manda dos recordatorios al mismo
+    // numero en <10 min, aunque vengan de hilos distintos).
+    if (fresh && (nowMs - Number(owner.ts)) < FU_BURST_MS) return false;
+    await env.KV.put(key, JSON.stringify({ cid: (owner && owner.cid) || "", ts: nowMs }), { expirationTtl: FU_OWNER_TTL_S });
+    return true;
+  } catch {
+    return true; // ante error, no frenar
+  }
+}
+
+async function routeFollowup(payload, env) {
   try {
     const edges = payload.available_edges;
     const ctx = isPlainObject(payload.execution_context) ? payload.execution_context : {};
@@ -377,7 +447,15 @@ function routeFollowup(payload) {
       const isTerminal = FOLLOWUP_TERMINAL_MARKERS.some((marker) => stage.includes(marker));
       return json({ next_edge: isTerminal ? "terminar" : "seguir" });
     }
-    if (edges.includes("esperar")) return json({ next_edge: isQuietHourPeru() ? "esperar" : "enviar" });
+    if (edges.includes("esperar")) {
+      // Decision de "Horario": silencio nocturno Peru primero; luego el freno
+      // por numero (una sola conversacion manda recordatorios por ventana).
+      if (isQuietHourPeru()) return json({ next_edge: "esperar" });
+      const phone = extractCustomerPhone(payload, ctx);
+      const convId = extractConversationId(payload, ctx);
+      const allowed = await followupThrottleAllows(env, phone, convId, Date.now());
+      return json({ next_edge: allowed ? "enviar" : "esperar" });
+    }
     return json({ next_edge: edges[0] || "" });
   } catch (error) {
     return json({ next_edge: "respondio", error: error instanceof Error ? error.message : String(error) });
@@ -769,6 +847,10 @@ globalThis.__aurelaCheckCoverage = {
   maybeRunWatchdog,
   watchdogSweep,
   watchdogConfig,
+  followupThrottleAllows,
+  extractConversationId,
+  extractCustomerPhone,
+  routeFollowup,
   canonicalizeLimaPlace,
   cleanDistrictText,
   detectCourier,

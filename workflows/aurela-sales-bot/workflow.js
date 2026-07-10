@@ -872,8 +872,20 @@ const FOLLOWUP_MESSAGES = {
   7: "Ultimo mensajito, prometido 🙏 {{vars.followup_hint}} Te lo dejo apartado al precio de hoy. Y para cuando quieras ver mas modelos con calma, aqui tienes nuestro catalogo: https://aurela.pe/collections/todos-los-productos 😊",
 };
 
-// Paso que RE-ENVIA la foto del producto (via mini-agente, igual que el audio).
-const PHOTO_STEPS = new Set([5]);
+// Media INTERCALADA en los seguimientos (via mini-agente, igual que el audio).
+// La presentacion ya envio las fotos 1-2; los recordatorios van mostrando las
+// SIGUIENTES (3, 4, 5) y re-muestran el video en un punto, alternando con pasos
+// de solo texto para no saturar. Cada envio degrada limpio: si el producto no
+// tiene esa foto (o no tiene video), ese paso queda como solo texto.
+//   kind:"image" + index:N  -> re-envia la N-esima imagen del producto.
+//   kind:"video"            -> re-envia el video del producto (si existe).
+// Pasos SIN entrada aqui (1, 2, 7) van como solo texto.
+const FOLLOWUP_MEDIA = {
+  3: { kind: "image", index: 3 }, // prueba social + 3ra foto
+  4: { kind: "video" },           // re-demo en video (con el empuje del 3x2)
+  5: { kind: "image", index: 4 }, // "te lo dejo de nuevo para que lo veas" + 4ta foto
+  6: { kind: "image", index: 5 }, // 10% dcto + 5ta foto
+};
 
 // Seguimientos con nota de voz (2do y 3ro). El audio se envia DESPUES del texto
 // corto, via un mini-nodo agente que llama send_media (unico camino soportado:
@@ -924,20 +936,27 @@ function audioAgentConfig(audioUrl) {
   };
 }
 
-// Mini-agente que re-envia UNA foto del producto pendiente (paso 5 del ladder).
-// Lee last_product_handle/last_product_title (guardados por el sales-agent),
-// busca la foto con product_media_lookup y la envia con send_media. Si no hay
-// producto guardado o no hay foto, termina sin enviar nada.
-function photoAgentConfig() {
+// Mini-agente que RE-ENVIA UNA sola pieza de media del producto en un
+// recordatorio, segun el descriptor del paso (FOLLOWUP_MEDIA): la N-esima foto
+// o el video. Lee last_product_handle/last_product_title (guardados por el
+// sales-agent) y usa product_media_lookup. Si no hay producto guardado, o no
+// existe esa foto/video, termina sin enviar nada (el paso queda como solo texto).
+function mediaAgentConfig(descriptor) {
+  const isVideo = descriptor && descriptor.kind === "video";
+  const n = descriptor && descriptor.index ? Number(descriptor.index) : 1;
+  const task = isVideo
+    ? "3) Llama product_media_lookup pasando handle y/o product y includeVideo=true. " +
+      "4) Si la respuesta trae videoAvailable=true, envia con send_media SOLO el item de type \"video\" (archivo = mediaUrl/url, caption = el titulo del producto). Si videoAvailable=false, llama complete_task SIN enviar nada. "
+    : `3) Llama product_media_lookup pasando handle y/o product y limit=${n}. ` +
+      `4) De los items de type "image", toma el que esta en la POSICION ${n} (el ${n}-esimo de la lista). Si existe, enviálo con send_media (archivo = mediaUrl/url, caption = el titulo del producto). Si hay MENOS de ${n} imagenes, llama complete_task SIN enviar nada (no repitas fotos ya mostradas). `;
   return {
     config: {
       system_prompt:
-        "Eres un paso automatico de re-envio de UNA foto de producto en un recordatorio de WhatsApp. Pasos exactos: " +
+        "Eres un paso automatico que RE-ENVIA UNA sola pieza de media (foto o video) de un producto en un recordatorio de WhatsApp. Pasos exactos: " +
         "1) Llama get_variable con name=last_product_handle y luego get_variable con name=last_product_title. " +
         "2) Si ambos estan vacios o no existen, llama complete_task de inmediato SIN enviar nada. " +
-        "3) Si hay handle o titulo, llama product_media_lookup pasando handle y/o product con esos valores y limit=1. " +
-        "4) Si devuelve media con al menos un item, envia SOLO la primera imagen con send_media (archivo = mediaUrl/url, caption = el titulo del producto). " +
-        "5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una foto. " +
+        task +
+        "5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una pieza de media. " +
         "6) Al final llama complete_task siempre.",
       provider_model_id: "de8992a1-6f21-4a30-9d37-f8645f66e14e",
       provider_model_name: "gpt-4.1",
@@ -949,14 +968,15 @@ function photoAgentConfig() {
       flow_agent_function_tools: [
         {
           name: "product_media_lookup",
-          description: "Find real Shopify product photos by handle or title. Returns media items with mediaUrl to send via send_media.",
+          description: "Find real Shopify product photos and the product video by handle or title. Returns media items (each with type 'image' or 'video') with mediaUrl to send via send_media.",
           function_name: "Product Media Lookup",
           input_schema: {
             type: "object",
             properties: {
               handle: { type: "string", description: "Shopify product handle." },
               product: { type: "string", description: "Product title." },
-              limit: { type: "number", description: "Max images, use 1." },
+              limit: { type: "number", description: "Max images to return." },
+              includeVideo: { type: "boolean", description: "Set true to also return the product video item." },
             },
             additionalProperties: true,
           },
@@ -1047,7 +1067,7 @@ for (const { step, wait } of FOLLOWUPS) {
   // ¿Este escalon manda nota de voz? Solo si esta en AUDIO_STEPS y la URL existe.
   const audioUrl = AUDIO_STEPS.has(step) ? (FOLLOWUP_AUDIO[step] || "") : "";
   const useAudio = Boolean(audioUrl);
-  const usePhoto = PHOTO_STEPS.has(step);
+  const mediaDescriptor = !useAudio ? FOLLOWUP_MEDIA[step] : null;
   const next = step < FOLLOWUPS.length ? `fu-w${step + 1}` : "fu-lost";
 
   // Envio del seguimiento (texto). Con audio usa el texto corto que lo acompana.
@@ -1063,10 +1083,11 @@ for (const { step, wait } of FOLLOWUPS) {
     workflow.addNode(a, audioAgentConfig(audioUrl), { position: { x: baseX, y: 660 }, displayName: `Audio ${step}` });
     workflow.addEdge(s, a);
     workflow.addEdge(a, next);
-  } else if (usePhoto) {
-    // texto -> foto del producto (mini-agente product_media_lookup + send_media).
-    const p = `fu-p${step}`;
-    workflow.addNode(p, photoAgentConfig(), { position: { x: baseX, y: 660 }, displayName: `Foto ${step}` });
+  } else if (mediaDescriptor) {
+    // texto -> media del producto (mini-agente product_media_lookup + send_media).
+    const p = `fu-m${step}`;
+    const label = mediaDescriptor.kind === "video" ? `Video ${step}` : `Foto ${step}`;
+    workflow.addNode(p, mediaAgentConfig(mediaDescriptor), { position: { x: baseX, y: 660 }, displayName: label });
     workflow.addEdge(s, p);
     workflow.addEdge(p, next);
   } else {

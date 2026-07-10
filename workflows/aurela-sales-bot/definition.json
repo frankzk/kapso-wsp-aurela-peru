@@ -133,6 +133,11 @@
     {
       "label": "next",
       "source": "fu-s3",
+      "target": "fu-m3"
+    },
+    {
+      "label": "next",
+      "source": "fu-m3",
       "target": "fu-w4"
     },
     {
@@ -168,6 +173,11 @@
     {
       "label": "next",
       "source": "fu-s4",
+      "target": "fu-m4"
+    },
+    {
+      "label": "next",
+      "source": "fu-m4",
       "target": "fu-w5"
     },
     {
@@ -203,11 +213,11 @@
     {
       "label": "next",
       "source": "fu-s5",
-      "target": "fu-p5"
+      "target": "fu-m5"
     },
     {
       "label": "next",
-      "source": "fu-p5",
+      "source": "fu-m5",
       "target": "fu-w6"
     },
     {
@@ -243,6 +253,11 @@
     {
       "label": "next",
       "source": "fu-s6",
+      "target": "fu-m6"
+    },
+    {
+      "label": "next",
+      "source": "fu-m6",
       "target": "fu-w7"
     },
     {
@@ -1075,6 +1090,67 @@
     {
       "data": {
         "config": {
+          "enabled_default_tools": [
+            "send_media",
+            "get_variable",
+            "complete_task"
+          ],
+          "flow_agent_app_integration_tools": [],
+          "flow_agent_function_tools": [
+            {
+              "description": "Find real Shopify product photos and the product video by handle or title. Returns media items (each with type 'image' or 'video') with mediaUrl to send via send_media.",
+              "function_name": "Product Media Lookup",
+              "function_slug": "product-media-lookup",
+              "input_schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "handle": {
+                    "description": "Shopify product handle.",
+                    "type": "string"
+                  },
+                  "includeVideo": {
+                    "description": "Set true to also return the product video item.",
+                    "type": "boolean"
+                  },
+                  "limit": {
+                    "description": "Max images to return.",
+                    "type": "number"
+                  },
+                  "product": {
+                    "description": "Product title.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "name": "product_media_lookup"
+            }
+          ],
+          "flow_agent_knowledge_bases": [],
+          "flow_agent_mcp_servers": [],
+          "flow_agent_resources": [],
+          "flow_agent_webhooks": [],
+          "max_iterations": 6,
+          "max_tokens": 1024,
+          "message_delivery_mode": "auto_send_assistant_text",
+          "provider_model_id": "de8992a1-6f21-4a30-9d37-f8645f66e14e",
+          "provider_model_name": "gpt-4.1",
+          "system_prompt": "Eres un paso automatico que RE-ENVIA UNA sola pieza de media (foto o video) de un producto en un recordatorio de WhatsApp. Pasos exactos: 1) Llama get_variable con name=last_product_handle y luego get_variable con name=last_product_title. 2) Si ambos estan vacios o no existen, llama complete_task de inmediato SIN enviar nada. 3) Llama product_media_lookup pasando handle y/o product y limit=3. 4) De los items de type \"image\", toma el que esta en la POSICION 3 (el 3-esimo de la lista). Si existe, enviálo con send_media (archivo = mediaUrl/url, caption = el titulo del producto). Si hay MENOS de 3 imagenes, llama complete_task SIN enviar nada (no repitas fotos ya mostradas). 5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una pieza de media. 6) Al final llama complete_task siempre.",
+          "temperature": 0
+        },
+        "display_name": "Foto 3",
+        "node_type": "agent"
+      },
+      "id": "fu-m3",
+      "position": {
+        "x": 1960,
+        "y": 660
+      },
+      "type": "flow-node"
+    },
+    {
+      "data": {
+        "config": {
           "has_timeout": true,
           "timeout_seconds": 14400
         },
@@ -1169,6 +1245,67 @@
       "position": {
         "x": 2280,
         "y": 520
+      },
+      "type": "flow-node"
+    },
+    {
+      "data": {
+        "config": {
+          "enabled_default_tools": [
+            "send_media",
+            "get_variable",
+            "complete_task"
+          ],
+          "flow_agent_app_integration_tools": [],
+          "flow_agent_function_tools": [
+            {
+              "description": "Find real Shopify product photos and the product video by handle or title. Returns media items (each with type 'image' or 'video') with mediaUrl to send via send_media.",
+              "function_name": "Product Media Lookup",
+              "function_slug": "product-media-lookup",
+              "input_schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "handle": {
+                    "description": "Shopify product handle.",
+                    "type": "string"
+                  },
+                  "includeVideo": {
+                    "description": "Set true to also return the product video item.",
+                    "type": "boolean"
+                  },
+                  "limit": {
+                    "description": "Max images to return.",
+                    "type": "number"
+                  },
+                  "product": {
+                    "description": "Product title.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "name": "product_media_lookup"
+            }
+          ],
+          "flow_agent_knowledge_bases": [],
+          "flow_agent_mcp_servers": [],
+          "flow_agent_resources": [],
+          "flow_agent_webhooks": [],
+          "max_iterations": 6,
+          "max_tokens": 1024,
+          "message_delivery_mode": "auto_send_assistant_text",
+          "provider_model_id": "de8992a1-6f21-4a30-9d37-f8645f66e14e",
+          "provider_model_name": "gpt-4.1",
+          "system_prompt": "Eres un paso automatico que RE-ENVIA UNA sola pieza de media (foto o video) de un producto en un recordatorio de WhatsApp. Pasos exactos: 1) Llama get_variable con name=last_product_handle y luego get_variable con name=last_product_title. 2) Si ambos estan vacios o no existen, llama complete_task de inmediato SIN enviar nada. 3) Llama product_media_lookup pasando handle y/o product y includeVideo=true. 4) Si la respuesta trae videoAvailable=true, envia con send_media SOLO el item de type \"video\" (archivo = mediaUrl/url, caption = el titulo del producto). Si videoAvailable=false, llama complete_task SIN enviar nada. 5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una pieza de media. 6) Al final llama complete_task siempre.",
+          "temperature": 0
+        },
+        "display_name": "Video 4",
+        "node_type": "agent"
+      },
+      "id": "fu-m4",
+      "position": {
+        "x": 2280,
+        "y": 660
       },
       "type": "flow-node"
     },
@@ -1283,7 +1420,7 @@
           "flow_agent_app_integration_tools": [],
           "flow_agent_function_tools": [
             {
-              "description": "Find real Shopify product photos by handle or title. Returns media items with mediaUrl to send via send_media.",
+              "description": "Find real Shopify product photos and the product video by handle or title. Returns media items (each with type 'image' or 'video') with mediaUrl to send via send_media.",
               "function_name": "Product Media Lookup",
               "function_slug": "product-media-lookup",
               "input_schema": {
@@ -1293,8 +1430,12 @@
                     "description": "Shopify product handle.",
                     "type": "string"
                   },
+                  "includeVideo": {
+                    "description": "Set true to also return the product video item.",
+                    "type": "boolean"
+                  },
                   "limit": {
-                    "description": "Max images, use 1.",
+                    "description": "Max images to return.",
                     "type": "number"
                   },
                   "product": {
@@ -1316,13 +1457,13 @@
           "message_delivery_mode": "auto_send_assistant_text",
           "provider_model_id": "de8992a1-6f21-4a30-9d37-f8645f66e14e",
           "provider_model_name": "gpt-4.1",
-          "system_prompt": "Eres un paso automatico de re-envio de UNA foto de producto en un recordatorio de WhatsApp. Pasos exactos: 1) Llama get_variable con name=last_product_handle y luego get_variable con name=last_product_title. 2) Si ambos estan vacios o no existen, llama complete_task de inmediato SIN enviar nada. 3) Si hay handle o titulo, llama product_media_lookup pasando handle y/o product con esos valores y limit=1. 4) Si devuelve media con al menos un item, envia SOLO la primera imagen con send_media (archivo = mediaUrl/url, caption = el titulo del producto). 5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una foto. 6) Al final llama complete_task siempre.",
+          "system_prompt": "Eres un paso automatico que RE-ENVIA UNA sola pieza de media (foto o video) de un producto en un recordatorio de WhatsApp. Pasos exactos: 1) Llama get_variable con name=last_product_handle y luego get_variable con name=last_product_title. 2) Si ambos estan vacios o no existen, llama complete_task de inmediato SIN enviar nada. 3) Llama product_media_lookup pasando handle y/o product y limit=4. 4) De los items de type \"image\", toma el que esta en la POSICION 4 (el 4-esimo de la lista). Si existe, enviálo con send_media (archivo = mediaUrl/url, caption = el titulo del producto). Si hay MENOS de 4 imagenes, llama complete_task SIN enviar nada (no repitas fotos ya mostradas). 5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una pieza de media. 6) Al final llama complete_task siempre.",
           "temperature": 0
         },
         "display_name": "Foto 5",
         "node_type": "agent"
       },
-      "id": "fu-p5",
+      "id": "fu-m5",
       "position": {
         "x": 2600,
         "y": 660
@@ -1426,6 +1567,67 @@
       "position": {
         "x": 2920,
         "y": 520
+      },
+      "type": "flow-node"
+    },
+    {
+      "data": {
+        "config": {
+          "enabled_default_tools": [
+            "send_media",
+            "get_variable",
+            "complete_task"
+          ],
+          "flow_agent_app_integration_tools": [],
+          "flow_agent_function_tools": [
+            {
+              "description": "Find real Shopify product photos and the product video by handle or title. Returns media items (each with type 'image' or 'video') with mediaUrl to send via send_media.",
+              "function_name": "Product Media Lookup",
+              "function_slug": "product-media-lookup",
+              "input_schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "handle": {
+                    "description": "Shopify product handle.",
+                    "type": "string"
+                  },
+                  "includeVideo": {
+                    "description": "Set true to also return the product video item.",
+                    "type": "boolean"
+                  },
+                  "limit": {
+                    "description": "Max images to return.",
+                    "type": "number"
+                  },
+                  "product": {
+                    "description": "Product title.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "name": "product_media_lookup"
+            }
+          ],
+          "flow_agent_knowledge_bases": [],
+          "flow_agent_mcp_servers": [],
+          "flow_agent_resources": [],
+          "flow_agent_webhooks": [],
+          "max_iterations": 6,
+          "max_tokens": 1024,
+          "message_delivery_mode": "auto_send_assistant_text",
+          "provider_model_id": "de8992a1-6f21-4a30-9d37-f8645f66e14e",
+          "provider_model_name": "gpt-4.1",
+          "system_prompt": "Eres un paso automatico que RE-ENVIA UNA sola pieza de media (foto o video) de un producto en un recordatorio de WhatsApp. Pasos exactos: 1) Llama get_variable con name=last_product_handle y luego get_variable con name=last_product_title. 2) Si ambos estan vacios o no existen, llama complete_task de inmediato SIN enviar nada. 3) Llama product_media_lookup pasando handle y/o product y limit=5. 4) De los items de type \"image\", toma el que esta en la POSICION 5 (el 5-esimo de la lista). Si existe, enviálo con send_media (archivo = mediaUrl/url, caption = el titulo del producto). Si hay MENOS de 5 imagenes, llama complete_task SIN enviar nada (no repitas fotos ya mostradas). 5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una pieza de media. 6) Al final llama complete_task siempre.",
+          "temperature": 0
+        },
+        "display_name": "Foto 6",
+        "node_type": "agent"
+      },
+      "id": "fu-m6",
+      "position": {
+        "x": 2920,
+        "y": 660
       },
       "type": "flow-node"
     },

@@ -55,10 +55,19 @@ async function handleRequest(request, env = globalThis) {
   }
 }
 
+function headerFor(reason) {
+  const r = String(reason || "").trim().toLowerCase();
+  if (r.includes("reclamo") || r.includes("queja")) return "🔴 <b>RECLAMO — atender URGENTE</b>";
+  if (r.includes("mayorista")) return "📦 <b>Pedido mayorista — coordinar</b>";
+  if (r) return `🔔 <b>${escapeHtml(String(reason).trim())}</b>`;
+  // Sin reason: comportamiento previo (flujo de voucher Shalom/Olva).
+  return "🟢 <b>Voucher recibido — validar y enviar</b>";
+}
+
 function buildMessage(payload) {
   const p = payload || {};
   const lines = [];
-  lines.push("🟢 <b>Voucher recibido — validar y enviar</b>");
+  lines.push(headerFor(p.reason));
 
   const rows = [
     ["Cliente", p.customerName],

@@ -452,9 +452,20 @@ async function fetchConversationStats(config, range) {
 async function fetchCtwaConversationIds(config, range) {
   const ids = new Set();
   if (!config.kapsoApiKey) return { configured: false, ids, error: null };
+  // OJO: el endpoint de mensajes IGNORA created_after/created_before (devuelve los
+  // mas recientes sin filtrar). Por eso paginamos de lo mas nuevo a lo viejo y
+  // filtramos por TIMESTAMP en cliente, cortando al pasar el inicio de la ventana.
+  const startMs = Date.parse(range.sinceIso);
+  const endMs = Date.parse(range.untilIso);
+  const msgMs = (m) => {
+    const t = m && m.timestamp;
+    if (t == null) return null;
+    if (/^\d+$/.test(String(t))) return Number(t) * 1000; // unix segundos
+    const p = Date.parse(t);
+    return Number.isFinite(p) ? p : null;
+  };
   const buildUrl = (cursor) => {
-    let u = `${config.kapsoApiBase}/platform/v1/whatsapp/messages`
-      + `?direction=inbound&created_after=${encodeURIComponent(range.sinceIso)}&created_before=${encodeURIComponent(range.untilIso)}&limit=200`;
+    let u = `${config.kapsoApiBase}/platform/v1/whatsapp/messages?direction=inbound&limit=200`;
     if (cursor) u += `&after=${encodeURIComponent(cursor)}`;
     return u;
   };
@@ -465,11 +476,17 @@ async function fetchCtwaConversationIds(config, range) {
       if (!response.ok) return { configured: true, ids, error: `HTTP ${response.status}` };
       const payload = await response.json();
       const rows = payload?.data || [];
+      if (rows.length === 0) break;
+      let passedWindow = false;
       for (const m of rows) {
+        const ts = msgMs(m);
+        if (ts != null && ts < startMs) { passedWindow = true; break; } // ya pasamos la ventana (orden desc)
+        if (ts != null && ts > endMs) continue; // aun mas nuevo que la ventana
         if (!m || !m.referral) continue;
         const cid = m?.kapso?.whatsapp_conversation_id || m?.whatsapp_conversation_id;
         if (cid) ids.add(String(cid));
       }
+      if (passedWindow) break;
       const nextCursor = payload?.paging?.cursors?.after || payload?.paging?.next;
       if (!nextCursor || page === MAX_CONV_PAGES - 1) break;
       url = buildUrl(nextCursor);

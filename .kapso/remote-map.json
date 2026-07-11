@@ -15,14 +15,14 @@
     "campaign-report": {
       "files": {
         "functions/campaign-report/function.yaml": "0782343c0b02821e403bc1ea4aebf4d7d5865ce7ab3993830dd143fbe75267d8",
-        "functions/campaign-report/index.js": "63d9157a56bc222580fcc8037fc523ff7e0f9563703e12b0d6db0fe159d84507"
+        "functions/campaign-report/index.js": "c8635dab2b826f34a748ca3bae32fcc621280386f1681e86e8801247d98f10bd"
       },
       "id": "b9b96196-14f5-4ba0-8bd8-d48b0334d292",
-      "lastDeployedAt": "2026-07-10T23:03:09-04:00",
-      "lockVersion": 22,
+      "lastDeployedAt": "2026-07-10T23:04:40-04:00",
+      "lockVersion": 24,
       "slug": "campaign-report",
       "status": "deployed",
-      "updatedAt": "2026-07-10T23:03:09-04:00"
+      "updatedAt": "2026-07-10T23:04:40-04:00"
     },
     "check-coverage": {
       "files": {

@@ -1030,6 +1030,13 @@ function scoreCatalogProduct(product, query) {
     product.vendor,
   ].filter(Boolean).join(" "));
 
+  // Pre-filtro barato: el scoring corre por CADA producto del catalogo; si
+  // ninguna raiz/variante de la query aparece en el texto buscable, corta antes
+  // del scoring caro (evita reventar el CPU en catalogos grandes).
+  if (query.tokens && query.tokens.length && !query.tokens.some((token) => tokenVariants(token).some((v) => v && searchable.includes(v)))) {
+    return 0;
+  }
+
   const handle = product.handleNorm != null ? product.handleNorm : normalizeSearchText(product.handle || "");
   const title = product.titleNorm != null ? product.titleNorm : normalizeSearchText(product.title || "");
   const compactSearchable = product.compactSearchable != null ? product.compactSearchable : compactSearchText(searchable);

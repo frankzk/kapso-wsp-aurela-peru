@@ -48,6 +48,10 @@ async function handleRequest(request, env = globalThis) {
   // Fallback: permitir pasar la Kapso API key por parametro (kapso_key) cuando el
   // env del worker no la expone. Solo util para quien ya tiene la dashboard key.
   if (!config.kapsoApiKey && params.kapso_key) config.kapsoApiKey = String(params.kapso_key);
+  // Fallback de creds de Telegram por parametro (para el trigger del digest diario,
+  // que las pasa desde check-coverage donde ya estan disponibles).
+  if (!config.telegramToken && params.telegram_token) config.telegramToken = String(params.telegram_token);
+  if (!config.telegramChatId && params.telegram_chat_id) config.telegramChatId = String(params.telegram_chat_id);
 
   // Guarda de acceso: si hay key configurada, exigirla. Si no hay key configurada,
   // bloquear por defecto (no exponer ventas por accidente).
@@ -66,10 +70,18 @@ async function handleRequest(request, env = globalThis) {
     const conv = await fetchConversationStats(config, range);
     const report = buildReport({ sales, meta, conv, range, config });
 
+    // Segmentacion CTWA vs organico: solo en el job diario (digest/notify) para no
+    // ralentizar el dashboard interactivo (requiere listar mensajes con referral).
+    const wantCtwa = Boolean(params.digest) || params.notify === "telegram";
+    if (wantCtwa) {
+      const ctwaRes = await fetchCtwaConversationIds(config, range);
+      report.ctwa = buildCtwa(conv, sales, ctwaRes);
+    }
+
     // Modo notificacion: empuja un resumen al Telegram del equipo (para el job diario).
-    if (params.notify === "telegram") {
+    if (params.notify === "telegram" || params.digest) {
       const result = await sendTelegramSummary(config, report);
-      return json({ ok: result.ok, notify: "telegram", ...result, range: report.range });
+      return json({ ok: result.ok, notify: "telegram", ...result, range: report.range, ctwa: report.ctwa || null });
     }
 
     if (wantsJson) return json(report);
@@ -434,6 +446,64 @@ async function fetchConversationStats(config, range) {
   }
 }
 
+// Conversaciones que vienen de un anuncio CTWA: sus mensajes de entrada traen un
+// `referral` (source_type ad). Listamos los mensajes inbound del rango con
+// referral y devolvemos el set de conversation_id (denominador CTWA del digest).
+async function fetchCtwaConversationIds(config, range) {
+  const ids = new Set();
+  if (!config.kapsoApiKey) return { configured: false, ids, error: null };
+  const buildUrl = (cursor) => {
+    let u = `${config.kapsoApiBase}/platform/v1/whatsapp/messages`
+      + `?direction=inbound&created_after=${encodeURIComponent(range.sinceIso)}&created_before=${encodeURIComponent(range.untilIso)}&limit=200`;
+    if (cursor) u += `&after=${encodeURIComponent(cursor)}`;
+    return u;
+  };
+  try {
+    let url = buildUrl(null);
+    for (let page = 0; page < MAX_CONV_PAGES && url; page += 1) {
+      const response = await fetch(url, { headers: { "X-API-Key": config.kapsoApiKey, "Content-Type": "application/json" } });
+      if (!response.ok) return { configured: true, ids, error: `HTTP ${response.status}` };
+      const payload = await response.json();
+      const rows = payload?.data || [];
+      for (const m of rows) {
+        if (!m || !m.referral) continue;
+        const cid = m?.kapso?.whatsapp_conversation_id || m?.whatsapp_conversation_id;
+        if (cid) ids.add(String(cid));
+      }
+      const nextCursor = payload?.paging?.cursors?.after || payload?.paging?.next;
+      if (!nextCursor || page === MAX_CONV_PAGES - 1) break;
+      url = buildUrl(nextCursor);
+    }
+    return { configured: true, ids, error: null };
+  } catch (error) {
+    return { configured: true, ids, error: safeError(error) };
+  }
+}
+
+// Segmenta la conversion en CTWA (anuncio) vs organico cruzando: denominador =
+// conversaciones con referral; numerador = ordenes whatsapp-bot cuyo
+// kapso_conversation_id cae en ese set.
+function buildCtwa(conv, sales, ctwaRes) {
+  const ids = ctwaRes && ctwaRes.ids ? ctwaRes.ids : new Set();
+  const ctwaConvs = ids.size;
+  let ctwaOrders = 0;
+  if (sales && sales.whatsappOrderConvIds) {
+    for (const cid of sales.whatsappOrderConvIds) if (ids.has(cid)) ctwaOrders += 1;
+  }
+  const totalConvs = (conv && conv.total) || 0;
+  const totalOrders = (sales && sales.whatsappOrders) || 0;
+  const orgConvs = Math.max(0, totalConvs - ctwaConvs);
+  const orgOrders = Math.max(0, totalOrders - ctwaOrders);
+  const rate = (a, b) => (b ? a / b : null);
+  return {
+    configured: Boolean(ctwaRes && ctwaRes.configured),
+    error: ctwaRes ? ctwaRes.error : null,
+    ctwaConvs, ctwaOrders, ctwaRate: rate(ctwaOrders, ctwaConvs),
+    orgConvs, orgOrders, orgRate: rate(orgOrders, orgConvs),
+    totalConvs, totalOrders, totalRate: rate(totalOrders, totalConvs),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Construccion del reporte (puro, testeable)
 // ---------------------------------------------------------------------------
@@ -768,6 +838,16 @@ function buildTelegramSummary(report) {
   L.push(`🗓️ ${escapeHtml(report.range.since)} → ${escapeHtml(report.range.until)}`);
   L.push("");
   L.push(`💰 <b>Ingresos totales:</b> ${money(t.totalRevenue, cur)} (${t.ordersScanned} pedidos)`);
+  if (report.ctwa) {
+    const c = report.ctwa;
+    const pc = (r) => (r == null ? "s/d" : `${(r * 100).toFixed(1)}%`);
+    L.push("");
+    L.push("🔁 <b>Conversión (conversaciones → pedidos)</b>");
+    L.push(`🔴 Anuncio (CTWA): <b>${pc(c.ctwaRate)}</b> (${c.ctwaOrders}/${c.ctwaConvs})`);
+    L.push(`🟢 Orgánico: <b>${pc(c.orgRate)}</b> (${c.orgOrders}/${c.orgConvs})`);
+    L.push(`Σ Total: <b>${pc(c.totalRate)}</b> (${c.totalOrders}/${c.totalConvs})`);
+  }
+  L.push("");
   L.push(`🎯 <b>Atribuido a anuncios:</b> ${money(t.attributedRevenue, cur)} (${t.attributedOrders} ped · ${Math.round(t.attributionRate * 100)}%)`);
   if (report.metaConfigured) {
     let line = `📣 <b>Gasto:</b> ${money(t.totalSpend, cur)}`;
@@ -798,4 +878,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaCampaignReport = { buildReport, buildConversion, buildTelegramSummary, fetchOrderAggregates, fetchMetaInsights, fetchConversationStats, handleRequest, handler, resolveRange };
+globalThis.__aurelaCampaignReport = { buildReport, buildConversion, buildTelegramSummary, buildCtwa, fetchCtwaConversationIds, fetchOrderAggregates, fetchMetaInsights, fetchConversationStats, handleRequest, handler, resolveRange };

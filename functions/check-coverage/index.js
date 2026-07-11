@@ -236,9 +236,15 @@ async function handleRequest(request, env = globalThis) {
     return watchdogAdmin(payload, env);
   }
 
+  // Admin: disparar el digest diario manualmente (force ignora compuerta/hora).
+  if (payload.forceDigest || payload.digestDebug) {
+    return json(await maybeRunDailyDigest(env, { force: Boolean(payload.forceDigest) }));
+  }
+
   if (Array.isArray(payload.available_edges)) {
     const routed = await routeFollowup(payload, env);
     try { await maybeRunWatchdog(env); } catch {}
+    try { await maybeRunDailyDigest(env); } catch {}
     return routed;
   }
 
@@ -752,6 +758,52 @@ async function watchdogConfig(env) {
   return cfg;
 }
 
+// Digest diario de conversion (CTWA vs organico) al Telegram del equipo.
+// Piggyback sobre el trafico de routeFollowup (como el watchdog): compuerta en KV
+// una vez por dia, tras las 9:00 Lima (ayer ya suficientemente maduro). Dispara la
+// funcion campaign-report (que tiene creds de Shopify) en modo digest y esa
+// calcula + envia el Telegram. Aqui solo gatillamos.
+async function maybeRunDailyDigest(env, { force = false } = {}) {
+  if (!env?.KV) return { ran: false, reason: "no_kv" };
+  const limaHour = (new Date().getUTCHours() + 24 - 5) % 24;
+  if (!force && limaHour < 9) return { ran: false, reason: "too_early" };
+  const limaNow = new Date(Date.now() - 5 * 3600 * 1000);
+  const y = new Date(limaNow); y.setUTCDate(y.getUTCDate() - 1);
+  const yesterday = y.toISOString().slice(0, 10);
+  const key = `digest:sent:${yesterday}`;
+  if (!force && await env.KV.get(key)) return { ran: false, reason: "already_sent", day: yesterday };
+
+  // kapso + telegram desde watchdogConfig (env + fallback KV, ya probado por el
+  // watchdog). dash + id de campaign-report: env o KV.
+  const cfg = await watchdogConfig(env);
+  const g = (a, b) => env?.[a] || env?.[b] || globalThis[a] || globalThis[b];
+  let dash = g("DASHBOARD_ACCESS_KEY", "dASHBOARDACCESSKEY");
+  let crId = g("CAMPAIGN_REPORT_FUNCTION_ID", "cAMPAIGNREPORTFUNCTIONID");
+  try {
+    if (!dash) dash = await env.KV.get("DASHBOARD_ACCESS_KEY");
+    if (!crId) crId = await env.KV.get("CAMPAIGN_REPORT_FUNCTION_ID");
+  } catch {}
+  if (!cfg.kapsoApiKey || !dash || !crId) return { ran: false, reason: "missing_config", day: yesterday };
+
+  // Marca ANTES de disparar: evita duplicados si hay reintentos concurrentes.
+  await env.KV.put(key, String(Date.now()), { expirationTtl: 60 * 60 * 48 });
+  try {
+    // Pasa TODO como params (dash, kapso, telegram): asi campaign-report no depende
+    // de que sus propias claves esten inyectadas en su env.
+    const res = await fetch(`${cfg.kapsoApiBase}/platform/v1/functions/${crId}/invoke`, {
+      method: "POST",
+      headers: { "X-API-Key": cfg.kapsoApiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        period: "yesterday", digest: true, key: dash, kapso_key: cfg.kapsoApiKey,
+        telegram_token: cfg.telegramToken, telegram_chat_id: cfg.telegramChatId,
+      }),
+    });
+    return { ran: true, day: yesterday, status: res.status };
+  } catch (error) {
+    return { ran: true, day: yesterday, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function maybeRunWatchdog(env, { force = false } = {}) {
   if (!env?.KV) return { ran: false, reason: "no_kv" };
   if (!force && isQuietHourPeru()) return { ran: false, reason: "quiet_hours" };
@@ -824,7 +876,7 @@ async function watchdogSweep(cfg, env, now) {
 async function watchdogAdmin(payload, env) {
   if (payload.watchdogSeed && typeof payload.watchdogSeed === "object") {
     if (!env?.KV) return json({ ok: false, reason: "no_kv" });
-    const allowed = ["KAPSO_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"];
+    const allowed = ["KAPSO_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "DASHBOARD_ACCESS_KEY", "CAMPAIGN_REPORT_FUNCTION_ID"];
     const saved = [];
     for (const key of allowed) {
       const value = payload.watchdogSeed[key];
@@ -845,6 +897,7 @@ async function watchdogAdmin(payload, env) {
 
 globalThis.__aurelaCheckCoverage = {
   maybeRunWatchdog,
+  maybeRunDailyDigest,
   watchdogSweep,
   watchdogConfig,
   followupThrottleAllows,

@@ -99,14 +99,14 @@
     "shopify-product-lookup": {
       "files": {
         "functions/shopify-product-lookup/function.yaml": "970c187ae2b55c503a27e53d0969f3b9d67199602ae8dd994f9956c0e6502ce2",
-        "functions/shopify-product-lookup/index.js": "5049eedda20e2b8f079994ae8e37cb304201604390d6c25875cce464de2e2b6b"
+        "functions/shopify-product-lookup/index.js": "09bdc494c86f8ef4c631ed74686cb761b186d1818388a2f1d81c29649d79a9e2"
       },
       "id": "b95fa79b-ccea-4f74-b743-940792947e5e",
-      "lastDeployedAt": "2026-07-08T16:49:36-04:00",
-      "lockVersion": 60,
+      "lastDeployedAt": "2026-07-11T09:41:51-04:00",
+      "lockVersion": 62,
       "slug": "shopify-product-lookup",
       "status": "deployed",
-      "updatedAt": "2026-07-08T16:49:36-04:00"
+      "updatedAt": "2026-07-11T09:41:51-04:00"
     }
   },
   "version": 1,

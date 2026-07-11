@@ -848,7 +848,7 @@ async function getPublicProductByHandle(config, handle) {
   return null;
 }
 
-const CATALOG_KV_KEY = "catalog:normalized:v1";
+const CATALOG_KV_KEY = "catalog:normalized:v2";
 const CATALOG_KV_TTL_S = 30 * 60; // 30 min (mas largo que el cache en memoria)
 
 async function loadPublicCatalog(config, env) {
@@ -1030,11 +1030,11 @@ function scoreCatalogProduct(product, query) {
     product.vendor,
   ].filter(Boolean).join(" "));
 
-  const handle = normalizeSearchText(product.handle || "");
-  const title = normalizeSearchText(product.title || "");
-  const compactSearchable = compactSearchText(searchable);
-  const compactHandle = compactSearchText(handle);
-  const compactTitle = compactSearchText(title);
+  const handle = product.handleNorm != null ? product.handleNorm : normalizeSearchText(product.handle || "");
+  const title = product.titleNorm != null ? product.titleNorm : normalizeSearchText(product.title || "");
+  const compactSearchable = product.compactSearchable != null ? product.compactSearchable : compactSearchText(searchable);
+  const compactHandle = product.compactHandle != null ? product.compactHandle : compactSearchText(handle);
+  const compactTitle = product.compactTitle != null ? product.compactTitle : compactSearchText(title);
   const compactQuery = compactSearchText(query.normalized);
 
   let score = 0;
@@ -1117,8 +1117,8 @@ function searchCategoryProducts(catalog, category) {
 }
 
 function scoreCategoryProduct(product, category) {
-  const title = normalizeSearchText(product.title || "");
-  const handle = normalizeSearchText((product.handle || "").replace(/-/g, " "));
+  const title = product.titleNorm != null ? product.titleNorm : normalizeSearchText(product.title || "");
+  const handle = product.handleNorm != null ? product.handleNorm : normalizeSearchText((product.handle || "").replace(/-/g, " "));
   const searchable = product.searchText || normalizeSearchText([
     product.title,
     product.handle?.replace(/-/g, " "),
@@ -1361,6 +1361,8 @@ function publicProductToNormalized(product, publicShopDomain, options = {}) {
     variants.map((variant) => variant.title).join(" "),
   ].filter(Boolean).join(" "));
   const categories = categorizeSearchText(searchText);
+  const titleNorm = normalizeSearchText(product.title || product.handle || "");
+  const handleNorm = normalizeSearchText(product.handle || "");
 
   return {
     __source: options.source || "public",
@@ -1383,6 +1385,15 @@ function publicProductToNormalized(product, publicShopDomain, options = {}) {
     },
     variants,
     searchText,
+    // Campos normalizados PRECOMPUTADOS: el scoring corre por CADA producto del
+    // catalogo, y recalcular normalizeSearchText/compactSearchText ahi (N veces)
+    // reventaba el CPU del worker. Precomputados aqui (solo en el refresh raro),
+    // el scoring queda regex-free.
+    titleNorm: titleNorm,
+    handleNorm: handleNorm,
+    compactSearchable: compactSearchText(searchText),
+    compactTitle: compactSearchText(titleNorm),
+    compactHandle: compactSearchText(handleNorm),
   };
 }
 

@@ -58,7 +58,8 @@ Regla critica de herramientas:
 - Si shopify_product_lookup devuelve found=true, responde con el titulo, precio real y promociones con montos concretos. No digas solo "aplican 3x2 y 5x3".
 - Si shopify_product_lookup devuelve reason="category_matches" o reason="ambiguous", responde usando customerMessage o message como base y ofrece las opciones encontradas. No pidas link ni captura.
 - Solo usa la frase anti-alucinacion o preguntas de aclaracion cuando shopify_product_lookup ya devolvio found=false con reason="not_found" o reason="missing_product".
-- FALLO/ERROR DE LA HERRAMIENTA (distinto de found=false): si shopify_product_lookup no responde, da error, se demora o devuelve un resultado vacio o poco claro (SIN un found=false limpio), NO uses la frase anti-alucinacion ni pidas "link/captura": REINTENTA la llamada UNA vez. Si al reintentar sigue fallando Y el cliente YA nombro un producto o llego de un anuncio (hay referral/conversationId o last_product), NO lo mandes a buscar el link: responde con un PUENTE breve para no perder el lead, ej "Dame un segundito y te confirmo el precio y las promos 🙌", y vuelve a intentar el lookup en el siguiente turno. Pedir "link o captura" es SOLO para cuando no hay ninguna pista del producto (mensaje vago, sin nombre ni anuncio). Perder un lead que ya nombro el producto por un fallo temporal es la peor salida.
+- FALLO/ERROR DE LA HERRAMIENTA (distinto de found=false): si shopify_product_lookup no responde, da error, se demora o devuelve un resultado vacio o poco claro (SIN un found=false limpio), NO uses la frase anti-alucinacion ni pidas "link/captura": REINTENTA la llamada UNA vez en el MISMO turno. Si al reintentar sigue fallando Y el cliente YA nombro un producto o llego de un anuncio (hay referral/conversationId o last_product), NO lo mandes a buscar el link: responde con un PUENTE breve para no perder el lead, ej "Dame un segundito y te confirmo el precio y las promos 🙌", guarda con save_variable pending_retry="1" y retry_query=<el nombre o pista del producto que estabas buscando>, y llama complete_task. El sistema te REACTIVARA solo en ~1 min para reintentar el lookup (ver "MODO REINTENTO"). Pedir "link o captura" es SOLO para cuando no hay ninguna pista del producto (mensaje vago, sin nombre ni anuncio). Perder un lead que ya nombro el producto por un fallo temporal es la peor salida.
+- MODO REINTENTO (cuando corres y la variable pending_retry vale "1"): significa que un lookup fallo y quedaste con un reintento pendiente que el sistema reactivo solo. LO PRIMERO: limpia el flag con save_variable pending_retry="" (para no entrar en bucle; es UN solo reintento automatico). Luego: (a) si el cliente escribio un mensaje NUEVO durante la espera, atiende ESO normalmente; (b) si NO hay mensaje nuevo (te reactivaste solo tras la espera), reintenta shopify_product_lookup usando retry_query (o last_product): si found=true, presenta el producto con el formato normal (precio, fotos, promos); si vuelve a fallar o da found=false, recien AHORA pide el link/captura o deriva a humano. Pase lo que pase, pending_retry queda limpio.
 - Si el cliente pregunta "que opciones tienes?" o "que modelos hay?" y el mensaje anterior hablaba de una categoria, llama shopify_product_lookup con esa categoria anterior mas la pregunta actual.
 - Mantener hilo es obligatorio. Si el cliente pregunta tallas, colores, stock, precio, disponibilidad, fotos o variantes y ya hay last_product o el mensaje menciona un producto visto en los ultimos mensajes, responde sobre ese producto.
 - Para preguntas como "que tallas quedan de CloudSlides negro", "hay en negro", "tienes talla 36-37", "ese color queda?", usa el producto CloudSlides/last_product y filtra sus variantes. No muestres sugerencias de otros productos.
@@ -1006,7 +1007,32 @@ workflow.addNode("fu-terminal", {
     { label: "terminar", description: "Estado terminal (orden creada, no interesado, reclamo o handoff): no enviar mas seguimientos." },
   ],
 }, { position: { x: 1000, y: 100 }, displayName: "Seguir o terminar" });
-workflow.addEdge("sales-agent", "fu-terminal");
+
+// Auto-retry del lookup: tras CADA turno del agente, si quedo un reintento
+// pendiente (pending_retry truthy), espera ~60s y reactiva al agente para
+// reintentar la busqueda y presentar el producto SIN que el cliente escriba.
+// Si no hay reintento pendiente (lo normal), sigue directo al flujo de
+// seguimientos. El agente limpia pending_retry en la reactivacion (un solo
+// reintento; sin bucle).
+workflow.addNode("retry-decide", {
+  type: "decide",
+  decisionType: "function",
+  functionSlug: "check-coverage",
+  conditions: [
+    { label: "reintentar", description: "Quedo un reintento de busqueda pendiente (pending_retry): esperar corto y reintentar el lookup." },
+    { label: "continuar", description: "Sin reintento pendiente: seguir el flujo normal (seguimientos)." },
+  ],
+}, { position: { x: 780, y: 100 }, displayName: "¿Reintentar lookup?" });
+workflow.addEdge("sales-agent", "retry-decide");
+workflow.addEdge("retry-decide", "fu-terminal", { label: "continuar" });
+
+workflow.addNode("retry-wait", {
+  type: "wait_for_response",
+  timeoutSeconds: 60,
+}, { position: { x: 780, y: 300 }, displayName: "Espera reintento (60s)" });
+workflow.addEdge("retry-decide", "retry-wait", { label: "reintentar" });
+// Si el cliente escribe -> atiende su mensaje; si vence la espera -> reintenta.
+workflow.addEdge("retry-wait", "sales-agent");
 
 workflow.addNode("fu-end", {
   type: "set_variable",

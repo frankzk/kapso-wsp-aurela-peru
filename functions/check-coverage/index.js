@@ -447,6 +447,15 @@ async function routeFollowup(payload, env) {
     const messages = (payload.whatsapp_context && Array.isArray(payload.whatsapp_context.messages))
       ? payload.whatsapp_context.messages
       : [];
+    // Auto-retry del lookup: si el agente quedo con un reintento pendiente
+    // (pending_retry truthy), rutea a "reintentar" (espera corta + reintento);
+    // si no, sigue el flujo normal. Default seguro = la otra rama.
+    if (edges.includes("reintentar")) {
+      const pending = String((vars.pending_retry != null ? vars.pending_retry : "")).trim().toLowerCase();
+      const other = edges.find((e) => e !== "reintentar") || edges[0] || "";
+      const on = pending && pending !== "0" && pending !== "false" && pending !== "no";
+      return json({ next_edge: on ? "reintentar" : other });
+    }
     if (edges.includes("timeout") && edges.includes("respondio")) return json({ next_edge: resolveResume(system, messages) });
     if (edges.includes("terminar")) {
       const stage = String(vars.stage || "").toLowerCase();

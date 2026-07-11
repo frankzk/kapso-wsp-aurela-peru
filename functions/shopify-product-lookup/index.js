@@ -366,7 +366,7 @@ async function handleRequest(request, env = globalThis) {
     }
 
     if (!product) {
-      const catalog = await loadPublicCatalog(config);
+      const catalog = await loadPublicCatalog(config, env);
 
       for (const handle of handles) {
         product = getCatalogProductByHandle(catalog, handle);
@@ -415,7 +415,7 @@ async function handleRequest(request, env = globalThis) {
         if (!product) {
           const candidates = extractProductNameCandidates(referral.headline, referral.body);
           if (candidates.length) {
-            const catalog = await loadPublicCatalog(config);
+            const catalog = await loadPublicCatalog(config, env);
             for (const cand of candidates) {
               const s = searchCatalogProducts(catalog, cand, []);
               if (s.product && !s.ambiguous) { product = s.product; autoLearned = true; break; }
@@ -437,7 +437,7 @@ async function handleRequest(request, env = globalThis) {
         if (!product) {
           const adText = adReferralText(referral);
           if (adText) {
-            const catalog = await loadPublicCatalog(config);
+            const catalog = await loadPublicCatalog(config, env);
             const adSearch = searchCatalogProducts(catalog, adText, []);
             product = adSearch.product || null;
             if (!product && config.token) {
@@ -518,7 +518,7 @@ async function handleRequest(request, env = globalThis) {
     if (outOfStock) {
       // Nunca ofrecer un producto agotado como alternativa: buscar solo alternativas EN STOCK
       // de la misma categoria. Si no hay ninguna, avisar + ofrecer asesora (sin empujar otra categoria).
-      const catalog = await loadPublicCatalog(config);
+      const catalog = await loadPublicCatalog(config, env);
       const alternatives = findInStockAlternatives(catalog, normalizedProduct);
       return json({
         found: true,
@@ -848,12 +848,31 @@ async function getPublicProductByHandle(config, handle) {
   return null;
 }
 
-async function loadPublicCatalog(config) {
+const CATALOG_KV_KEY = "catalog:normalized:v1";
+const CATALOG_KV_TTL_S = 30 * 60; // 30 min (mas largo que el cache en memoria)
+
+async function loadPublicCatalog(config, env) {
   const now = Date.now();
   const cached = globalThis.__AURELA_PUBLIC_CATALOG_CACHE;
 
   if (cached?.expiresAt > now && Array.isArray(cached.products)) {
     return cached.products;
+  }
+
+  // Cache COMPARTIDA en KV: evita que cada worker frio baje+normalice todo el
+  // catalogo (products.json multi-pagina), que reventaba el CPU del worker de
+  // forma intermitente (~60% de "Function error" en busquedas por nombre).
+  if (env?.KV) {
+    try {
+      const raw = await env.KV.get(CATALOG_KV_KEY);
+      if (raw) {
+        const products = JSON.parse(raw);
+        if (Array.isArray(products) && products.length) {
+          globalThis.__AURELA_PUBLIC_CATALOG_CACHE = { expiresAt: now + CATALOG_CACHE_TTL_MS, products };
+          return products;
+        }
+      }
+    } catch { /* KV opcional o parse fallido -> re-fetch abajo */ }
   }
 
   const products = [];
@@ -887,6 +906,16 @@ async function loadPublicCatalog(config) {
     expiresAt: now + CATALOG_CACHE_TTL_MS,
     products,
   };
+
+  // Sembrar KV para las proximas invocaciones (con guarda por el limite de KV).
+  if (env?.KV && products.length) {
+    try {
+      const serialized = JSON.stringify(products);
+      if (serialized.length < 20 * 1024 * 1024) {
+        await env.KV.put(CATALOG_KV_KEY, serialized, { expirationTtl: CATALOG_KV_TTL_S });
+      }
+    } catch { /* KV opcional */ }
+  }
 
   return products;
 }

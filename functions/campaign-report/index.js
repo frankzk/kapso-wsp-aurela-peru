@@ -465,7 +465,8 @@ async function fetchCtwaConversationIds(config, range) {
     return Number.isFinite(p) ? p : null;
   };
   const buildUrl = (cursor) => {
-    let u = `${config.kapsoApiBase}/platform/v1/whatsapp/messages?direction=inbound&limit=200`;
+    // El endpoint capa en limit=100 (mas alto devuelve vacio).
+    let u = `${config.kapsoApiBase}/platform/v1/whatsapp/messages?direction=inbound&limit=100`;
     if (cursor) u += `&after=${encodeURIComponent(cursor)}`;
     return u;
   };

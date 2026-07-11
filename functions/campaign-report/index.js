@@ -210,6 +210,7 @@ async function fetchOrderAggregates(config, range) {
   let whatsappOrders = 0;
   let whatsappRevenue = 0;
   const whatsappOrdersByDay = new Map();
+  const whatsappOrderConvIds = new Set();
   let truncated = false;
 
   const queryString = `created_at:>='${range.sinceIso}' created_at:<='${range.untilIso}'`;
@@ -248,6 +249,8 @@ async function fetchOrderAggregates(config, range) {
         if (Number.isFinite(amount)) whatsappRevenue += amount;
         const day = limaDay(order.createdAt);
         if (day) whatsappOrdersByDay.set(day, (whatsappOrdersByDay.get(day) || 0) + 1);
+        // Conv id para cruzar orden<->conversacion (segmentacion CTWA en el digest).
+        if (attrs.kapso_conversation_id) whatsappOrderConvIds.add(String(attrs.kapso_conversation_id));
       }
 
       const adId = attrs.ctwa_ad_id;
@@ -286,6 +289,7 @@ async function fetchOrderAggregates(config, range) {
     whatsappOrders,
     whatsappRevenue,
     whatsappOrdersByDay,
+    whatsappOrderConvIds,
     truncated,
   };
 }

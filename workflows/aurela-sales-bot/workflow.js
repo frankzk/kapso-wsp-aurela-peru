@@ -426,6 +426,10 @@ Confirmas y registro tu pedido?"
 
 Despues de crear orden:
 - Responde breve: "Listo, tu pedido quedo registrado. Nuestro equipo coordinara el despacho por aqui."
+
+PEDIDO YA REGISTRADO (post-venta: el cliente YA tiene un pedido creado — stage="orden_creada", o el chat tiene un *Codigo de pedido* #AUR, o pregunta por "mi pedido"). Trata estos casos como POST-VENTA, no como un lead nuevo (no re-ofrezcas producto ni promos):
+- ENTREGA / "¿cuanto demora?" / "¿cuando llega?": NO vuelvas a cotizar el plazo "2 a 4 dias" desde cero — el pedido ya lleva dias en proceso, dar la ventana como si empezara HOY es un error. Reasegura que su pedido YA ESTA EN CAMINO y deberia estar por llegar, y que un asesor le escribe en un momento con la fecha exacta. Ej: "Tu pedido *#[codigo]* ya esta en camino 📦 — ya deberia estar por llegar. En un momento un asesor te confirma la fecha exacta de entrega 🙌". Si pregunta por que demora, explica breve (los envios a provincia salen de Lima) pero SIN repetir la ventana como si arrancara hoy. Si insiste en el estado/tracking exacto, llama notify_team (con el codigo #AUR + conversationId) para que un asesor le de el estado real, y avisale que en breve lo contactan.
+- VOUCHER / COMPROBANTE en CONTRAENTREGA: en contraentrega NO hay adelanto ni voucher — el cliente PAGA AL RECIBIR. NUNCA le pidas ni le menciones "enviar un voucher/captura" en un pedido contraentrega (eso es SOLO para Shalom/Olva). Si en un pedido contraentrega el cliente pide "el voucher/boucher/comprobante", entiende que quiere un comprobante de su compra: dale su *codigo de pedido #[AUR...]* como referencia y recuerdale que en su caso *paga al recibir* (no hay adelanto que enviar). Si pide boleta/factura formal, toma sus datos y pasa el pedido a un asesor con notify_team.
 `,
     "provider_model_id": "de8992a1-6f21-4a30-9d37-f8645f66e14e",
     "provider_model_name": "gpt-4.1",

@@ -24,7 +24,8 @@ async function handleRequest(request, env = globalThis) {
     return json({ ok: false, reason: "missing_telegram_config" });
   }
 
-  const text = buildMessage(payload);
+  const ctx = deriveContext(payload);
+  const text = buildMessage(payload, ctx);
 
   try {
     const res = await fetch(`${TELEGRAM_API_BASE}/bot${config.token}/sendMessage`, {
@@ -64,14 +65,59 @@ function headerFor(reason) {
   return "🟢 <b>Voucher recibido — validar y enviar</b>";
 }
 
-function buildMessage(payload) {
+const DEFAULT_PROJECT_ID = "387343ab-aa79-4641-b56b-fe9cf93e274e";
+
+// Deriva el telefono del cliente y el id de conversacion del contexto de
+// ejecucion (siempre disponibles), sin depender de que el agente los pase.
+function deriveContext(payload) {
+  const p = payload || {};
+  const ec = isPlainObject(p.execution_context) ? p.execution_context : {};
+  const ecCtx = isPlainObject(ec.context) ? ec.context : {};
+  const ecSys = isPlainObject(ec.system) ? ec.system : {};
+
+  let phone = p.phone || ecCtx.phone_number || ecCtx.phone || "";
+  if (!phone) {
+    const msgs = p.whatsapp_context && Array.isArray(p.whatsapp_context.messages) ? p.whatsapp_context.messages : [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i] || {};
+      const dir = m.direction || (m.kapso && m.kapso.direction);
+      if (dir === "inbound" && (m.from || m.phone_number)) { phone = m.from || m.phone_number; break; }
+    }
+  }
+  phone = String(phone || "").replace(/[^\d]/g, "");
+
+  let convId = "";
+  const cands = [p.conversationId, p.conversation_id, ecCtx.conversation_id, ecCtx.whatsapp_conversation_id, ecSys.conversation_id, ec.conversation_id, p.whatsapp_conversation_id];
+  for (const c of cands) { if (c && typeof c === "string") { convId = c; break; } }
+  if (!convId) {
+    const msgs = p.whatsapp_context && Array.isArray(p.whatsapp_context.messages) ? p.whatsapp_context.messages : [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i] || {};
+      const id = (m.kapso && m.kapso.whatsapp_conversation_id) || m.whatsapp_conversation_id;
+      if (id) { convId = String(id); break; }
+    }
+  }
+
+  const projectId = p.projectId || (typeof globalThis !== "undefined" && (globalThis.KAPSO_PROJECT_ID || globalThis.kAPSOPROJECTID)) || DEFAULT_PROJECT_ID;
+  return { phone, convId, projectId };
+}
+
+function buildMessage(payload, ctx = {}) {
   const p = payload || {};
   const lines = [];
   lines.push(headerFor(p.reason));
 
+  // Telefono del cliente PRIMERO (para saber a quien atender), con enlaces.
+  const phone = ctx.phone || String(p.phone || "").replace(/[^\d]/g, "");
+  if (phone) {
+    lines.push(`📱 <b>Cliente:</b> +${escapeHtml(phone)}  (<a href="https://wa.me/${escapeHtml(phone)}">abrir WhatsApp</a>)`);
+  }
+  if (ctx.convId) {
+    lines.push(`👉 <a href="https://app.kapso.ai/projects/${escapeHtml(ctx.projectId)}/inbox?conversation_id=${escapeHtml(ctx.convId)}">Ir a atender en Kapso</a>`);
+  }
+
   const rows = [
-    ["Cliente", p.customerName],
-    ["Telefono", p.phone],
+    ["Nombre", p.customerName],
     ["Producto", p.product],
     ["Total", formatTotal(p.total)],
     ["Courier", p.courier],
@@ -87,6 +133,10 @@ function buildMessage(payload) {
   }
 
   return lines.join("\n");
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function formatTotal(total) {

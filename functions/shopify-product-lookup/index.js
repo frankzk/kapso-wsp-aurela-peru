@@ -345,6 +345,15 @@ async function handleRequest(request, env = globalThis) {
   try {
     const input = await readJson(request);
     if (input.adSeed || input.adDebug) return adAdmin(input, env);
+    if (input.catalogDebug) {
+      const cfg = getConfig(env);
+      const t0 = Date.now();
+      const cat = await loadPublicCatalog(cfg, env);
+      const ms = Date.now() - t0;
+      let bytes = -1; try { bytes = JSON.stringify(cat).length; } catch {}
+      let kvHas = false; try { kvHas = env?.KV ? Boolean(await env.KV.get(CATALOG_KV_KEY)) : false; } catch {}
+      return json({ ok: true, catalogDebug: true, count: cat.length, bytes, mb: bytes >= 0 ? +(bytes / 1048576).toFixed(2) : -1, kvHasCatalog: kvHas, loadMs: ms });
+    }
     const config = getConfig(env);
     const queryText = collectInputText(input);
     const handles = extractHandleCandidates(queryText);
@@ -1012,7 +1021,15 @@ function cleanProductQuery(text, handles) {
       .slice(0, 18),
   ).slice(0, 12);
 
-  return { normalized: tokens.join(" "), tokens };
+  // Precomputa por token las variantes y sus formas compactas UNA sola vez.
+  // (Antes esto se recalculaba dentro del scoring, es decir por CADA producto
+  // del catalogo -> N x regex, que reventaba el CPU del worker.)
+  const tokenData = tokens.map((token) => {
+    const variants = tokenVariants(token);
+    return { token, variants, compactVariants: variants.map(compactSearchText).filter((v) => v.length >= 6) };
+  });
+  const joined = tokens.join(" ");
+  return { normalized: joined, tokens, tokenData, compactNormalized: compactSearchText(joined) };
 }
 
 function expandProductQueryText(text) {
@@ -1030,10 +1047,16 @@ function scoreCatalogProduct(product, query) {
     product.vendor,
   ].filter(Boolean).join(" "));
 
-  // Pre-filtro barato: el scoring corre por CADA producto del catalogo; si
-  // ninguna raiz/variante de la query aparece en el texto buscable, corta antes
-  // del scoring caro (evita reventar el CPU en catalogos grandes).
-  if (query.tokens && query.tokens.length && !query.tokens.some((token) => tokenVariants(token).some((v) => v && searchable.includes(v)))) {
+  // Variantes de la query PRECOMPUTADAS (una sola vez en cleanProductQuery).
+  // Antes se recalculaban aqui, es decir por CADA producto -> N x regex (el CPU
+  // killer). Fallback por si viniera una query sin tokenData.
+  const tokenData = Array.isArray(query.tokenData)
+    ? query.tokenData
+    : (query.tokens || []).map((token) => ({ token, variants: tokenVariants(token), compactVariants: tokenVariants(token).map(compactSearchText).filter((v) => v.length >= 6) }));
+
+  // Pre-filtro barato: si ninguna raiz/variante de la query aparece en el texto
+  // buscable, corta antes del scoring caro.
+  if (tokenData.length && !tokenData.some((td) => td.variants.some((v) => v && searchable.includes(v)))) {
     return 0;
   }
 
@@ -1042,7 +1065,17 @@ function scoreCatalogProduct(product, query) {
   const compactSearchable = product.compactSearchable != null ? product.compactSearchable : compactSearchText(searchable);
   const compactHandle = product.compactHandle != null ? product.compactHandle : compactSearchText(handle);
   const compactTitle = product.compactTitle != null ? product.compactTitle : compactSearchText(title);
-  const compactQuery = compactSearchText(query.normalized);
+  const compactQuery = query.compactNormalized != null ? query.compactNormalized : compactSearchText(query.normalized);
+
+  // Sets de tokens del producto, UNA sola vez por producto (no por token/variante).
+  // Antes cada rama termMatchesSearchText() re-normalizaba texto+termino (regex)
+  // por CADA variante y producto -> el CPU killer residual del path por nombre.
+  // Como los `variants` ya vienen normalizados y expandidos (singular/plural),
+  // basta con membresia en el set; solo las variantes con espacio usan substring.
+  const handleTokenSet = new Set(handle.split(/\s+/).filter(Boolean));
+  const titleTokenSet = new Set(title.split(/\s+/).filter(Boolean));
+  const searchableTokenSet = new Set(searchable.split(/\s+/).filter(Boolean));
+  const inSet = (tokenSet, text, term) => (term.includes(" ") ? ` ${text} `.includes(` ${term} `) : tokenSet.has(term));
 
   let score = 0;
   if (query.normalized && searchable.includes(query.normalized)) score += 40;
@@ -1051,24 +1084,33 @@ function scoreCatalogProduct(product, query) {
   if (compactQuery.length >= 5 && compactTitle.includes(compactQuery)) score += 22;
   if (compactQuery.length >= 5 && compactHandle.includes(compactQuery)) score += 18;
 
-  for (const token of query.tokens) {
-    const variants = tokenVariants(token);
-    const compactVariants = variants.map(compactSearchText).filter((variant) => variant.length >= 6);
+  // Itera sobre tokenData PRECOMPUTADO (variants/compactVariants calculados una
+  // sola vez en cleanProductQuery), no por producto.
+  for (const td of tokenData) {
+    const variants = td.variants;
+    const compactVariants = td.compactVariants;
 
     if (variants.some((variant) => handle === variant) || compactVariants.some((variant) => compactHandle === variant)) score += 28;
-    else if (variants.some((variant) => termMatchesSearchText(handle, variant)) || compactVariants.some((variant) => compactHandle.includes(variant))) score += 12;
+    else if (variants.some((variant) => inSet(handleTokenSet, handle, variant)) || compactVariants.some((variant) => compactHandle.includes(variant))) score += 12;
 
     if (
       variants.some((variant) => title === variant || title.startsWith(`${variant} `))
       || compactVariants.some((variant) => compactTitle === variant || compactTitle.startsWith(variant))
     ) score += 24;
-    else if (variants.some((variant) => termMatchesSearchText(title, variant)) || compactVariants.some((variant) => compactTitle.includes(variant))) score += 14;
-    else if (variants.some((variant) => termMatchesSearchText(searchable, variant)) || compactVariants.some((variant) => compactSearchable.includes(variant))) score += 3;
+    else if (variants.some((variant) => inSet(titleTokenSet, title, variant)) || compactVariants.some((variant) => compactTitle.includes(variant))) score += 14;
+    else if (variants.some((variant) => inSet(searchableTokenSet, searchable, variant)) || compactVariants.some((variant) => compactSearchable.includes(variant))) score += 3;
   }
 
-  const matchedTokens = query.tokens.filter((token) => searchableHasToken(searchable, token)).length;
-  if (matchedTokens === query.tokens.length && query.tokens.length >= 2) score += 12;
-  if (matchedTokens < Math.min(2, query.tokens.length)) score = 0;
+  // matchedTokens con datos PRECOMPUTADOS (reusa searchableTokenSet ya construido).
+  let matchedTokens = 0;
+  for (const td of tokenData) {
+    const hit = td.variants.some((v) => (
+      v && (v.includes(" ") ? searchable.includes(v) : searchableTokenSet.has(v))
+    )) || td.compactVariants.some((cv) => compactSearchable.includes(cv));
+    if (hit) matchedTokens += 1;
+  }
+  if (matchedTokens === tokenData.length && tokenData.length >= 2) score += 12;
+  if (matchedTokens < Math.min(2, tokenData.length)) score = 0;
 
   return score;
 }
@@ -1115,15 +1157,41 @@ function isPureCategoryQuery(query, category) {
 }
 
 function searchCategoryProducts(catalog, category) {
+  // Terminos de la categoria PRECOMPUTADOS una sola vez (no por producto).
+  const preparedTerms = prepareCategoryTerms(category);
   return catalog
-    .map((product) => ({ product, score: scoreCategoryProduct(product, category) }))
+    .map((product) => ({ product, score: scoreCategoryProduct(product, category, preparedTerms) }))
     .filter((item) => item.score >= 10)
     .sort((a, b) => b.score - a.score)
     .slice(0, 6)
     .map(catalogMatchSummary);
 }
 
-function scoreCategoryProduct(product, category) {
+// Normaliza los terminos de la categoria y expande singular/plural UNA vez.
+// Antes esto ocurria dentro de scoreCategoryProduct -> por CADA producto.
+function prepareCategoryTerms(category) {
+  return (category.terms || [])
+    .map((rawTerm) => {
+      const term = normalizeSearchText(rawTerm);
+      if (!term) return null;
+      const hasSpace = term.includes(" ");
+      const variants = hasSpace ? null : new Set([term, ...expandSingularPlural(term)]);
+      return { term, hasSpace, variants };
+    })
+    .filter(Boolean);
+}
+
+// Coincidencia con texto YA normalizado y su set de tokens (sin regex por producto).
+function preparedTermMatches(normalizedText, tokenSet, prepTerm) {
+  if (prepTerm.hasSpace) return ` ${normalizedText} `.includes(` ${prepTerm.term} `);
+  if (tokenSet.has(prepTerm.term)) return true;
+  for (const variant of prepTerm.variants) {
+    if (tokenSet.has(variant)) return true;
+  }
+  return false;
+}
+
+function scoreCategoryProduct(product, category, preparedTerms) {
   const title = product.titleNorm != null ? product.titleNorm : normalizeSearchText(product.title || "");
   const handle = product.handleNorm != null ? product.handleNorm : normalizeSearchText((product.handle || "").replace(/-/g, " "));
   const searchable = product.searchText || normalizeSearchText([
@@ -1137,13 +1205,16 @@ function scoreCategoryProduct(product, category) {
 
   if (category.key === "carteras" && !isFashionBagSearchText(searchable)) return 0;
 
+  const terms = Array.isArray(preparedTerms) ? preparedTerms : prepareCategoryTerms(category);
+  const titleTokens = new Set(title.split(/\s+/).filter(Boolean));
+  const handleTokens = new Set(handle.split(/\s+/).filter(Boolean));
+  const searchableTokens = new Set(searchable.split(/\s+/).filter(Boolean));
+
   let score = 0;
-  for (const rawTerm of category.terms) {
-    const term = normalizeSearchText(rawTerm);
-    if (!term) continue;
-    if (termMatchesSearchText(title, term)) score += 16;
-    else if (termMatchesSearchText(handle, term)) score += 12;
-    else if (termMatchesSearchText(searchable, term)) score += 8;
+  for (const prepTerm of terms) {
+    if (preparedTermMatches(title, titleTokens, prepTerm)) score += 16;
+    else if (preparedTermMatches(handle, handleTokens, prepTerm)) score += 12;
+    else if (preparedTermMatches(searchable, searchableTokens, prepTerm)) score += 8;
   }
 
   if ((product.categories || []).includes(category.key)) score += 20;
@@ -1791,4 +1862,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaProductLookup = { adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText };
+globalThis.__aurelaProductLookup = { adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText, searchCatalogProducts, searchCategoryProducts, scoreCatalogProduct, scoreCategoryProduct, cleanProductQuery, detectCategoryQuery, publicProductToNormalized };

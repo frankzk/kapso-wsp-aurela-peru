@@ -15,14 +15,14 @@
     "campaign-report": {
       "files": {
         "functions/campaign-report/function.yaml": "0782343c0b02821e403bc1ea4aebf4d7d5865ce7ab3993830dd143fbe75267d8",
-        "functions/campaign-report/index.js": "c8635dab2b826f34a748ca3bae32fcc621280386f1681e86e8801247d98f10bd"
+        "functions/campaign-report/index.js": "6b7963caa83669b6bf45070d218c5818364b94176e06903e6998128c2aab4775"
       },
       "id": "b9b96196-14f5-4ba0-8bd8-d48b0334d292",
-      "lastDeployedAt": "2026-07-10T23:04:40-04:00",
-      "lockVersion": 24,
+      "lastDeployedAt": "2026-07-16T17:41:55-04:00",
+      "lockVersion": 26,
       "slug": "campaign-report",
       "status": "deployed",
-      "updatedAt": "2026-07-10T23:04:40-04:00"
+      "updatedAt": "2026-07-16T17:41:55-04:00"
     },
     "check-coverage": {
       "files": {
@@ -121,7 +121,7 @@
         "path": "workflows/aurela-sales-bot/workflow.js"
       },
       "id": "9c2ad1b6-c99c-432a-ba19-42882d07bd5d",
-      "lockVersion": 2082,
+      "lockVersion": 2255,
       "slug": "aurela-sales-bot",
       "sourceFile": {
         "hash": "c88f16af1addb325293c65c1ddee782a8fe64072198dc33e2704fb6a61d16fe6",

@@ -84,6 +84,10 @@ async function handleRequest(request, env = globalThis) {
       return json({ ok: result.ok, notify: "telegram", ...result, range: report.range, ctwa: report.ctwa || null });
     }
 
+    // Debug: filas crudas de ordenes-bot {day, convId} para segmentar CTWA client-side.
+    if (params.rows && sales && Array.isArray(sales.whatsappOrderRows)) {
+      report.orderRows = sales.whatsappOrderRows;
+    }
     if (wantsJson) return json(report);
     return html(renderDashboard(report).replace(/__KEY__/g, encodeURIComponent(provided)));
   } catch (error) {
@@ -223,6 +227,9 @@ async function fetchOrderAggregates(config, range) {
   let whatsappRevenue = 0;
   const whatsappOrdersByDay = new Map();
   const whatsappOrderConvIds = new Set();
+  // Filas crudas orden-bot {day, convId} para segmentar CTWA/organico fuera del
+  // worker (la paginacion CTWA server-side excede el CPU; se hace client-side).
+  const whatsappOrderRows = [];
   let truncated = false;
 
   const queryString = `created_at:>='${range.sinceIso}' created_at:<='${range.untilIso}'`;
@@ -262,7 +269,9 @@ async function fetchOrderAggregates(config, range) {
         const day = limaDay(order.createdAt);
         if (day) whatsappOrdersByDay.set(day, (whatsappOrdersByDay.get(day) || 0) + 1);
         // Conv id para cruzar orden<->conversacion (segmentacion CTWA en el digest).
-        if (attrs.kapso_conversation_id) whatsappOrderConvIds.add(String(attrs.kapso_conversation_id));
+        const convId = attrs.kapso_conversation_id ? String(attrs.kapso_conversation_id) : null;
+        if (convId) whatsappOrderConvIds.add(convId);
+        whatsappOrderRows.push({ day: day || null, convId });
       }
 
       const adId = attrs.ctwa_ad_id;
@@ -302,6 +311,7 @@ async function fetchOrderAggregates(config, range) {
     whatsappRevenue,
     whatsappOrdersByDay,
     whatsappOrderConvIds,
+    whatsappOrderRows,
     truncated,
   };
 }

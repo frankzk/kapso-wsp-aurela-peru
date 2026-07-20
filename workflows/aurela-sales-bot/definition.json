@@ -273,41 +273,6 @@
     {
       "label": "next",
       "source": "fu-m6",
-      "target": "fu-w7"
-    },
-    {
-      "label": "next",
-      "source": "fu-w7",
-      "target": "fu-wr7"
-    },
-    {
-      "label": "respondio",
-      "source": "fu-wr7",
-      "target": "sales-agent"
-    },
-    {
-      "label": "timeout",
-      "source": "fu-wr7",
-      "target": "fu-g7"
-    },
-    {
-      "label": "enviar",
-      "source": "fu-g7",
-      "target": "fu-s7"
-    },
-    {
-      "label": "esperar",
-      "source": "fu-g7",
-      "target": "fu-h7"
-    },
-    {
-      "label": "next",
-      "source": "fu-h7",
-      "target": "fu-wr7"
-    },
-    {
-      "label": "next",
-      "source": "fu-s7",
       "target": "fu-lost"
     }
   ],
@@ -1614,7 +1579,7 @@
     {
       "data": {
         "config": {
-          "message": "¿Y si lo pruebas sin riesgo? 😊 Te doy *10% de descuento* llevando 1 unidad hoy, para que pruebes la experiencia Aurela. O si prefieres mas ahorro, el *3x2* sigue en pie. Responde *10%* o *3x2* y te lo dejo listo ✨",
+          "message": "Ultimo empujon, prometido 🙏 Para que lo pruebes sin riesgo, te dejo *10% de descuento* llevando 1 unidad hoy (pagas al recibir y con *envio gratis* 📦). O si prefieres mas ahorro, el *3x2* sigue en pie. Responde *10%* o *3x2* y te lo dejo listo ✨",
           "phone_number_id": "1241790819006805"
         },
         "display_name": "Seguimiento 6",
@@ -1685,106 +1650,6 @@
       "position": {
         "x": 2920,
         "y": 660
-      },
-      "type": "flow-node"
-    },
-    {
-      "data": {
-        "config": {
-          "has_timeout": true,
-          "timeout_seconds": 25200
-        },
-        "display_name": "Espera 7",
-        "node_type": "wait_for_response"
-      },
-      "id": "fu-w7",
-      "position": {
-        "x": 3240,
-        "y": 100
-      },
-      "type": "flow-node"
-    },
-    {
-      "data": {
-        "config": {
-          "conditions": [
-            {
-              "description": "El cliente respondio durante la espera: devolver el control al agente.",
-              "label": "respondio"
-            },
-            {
-              "description": "Vencio la espera sin respuesta del cliente: evaluar el envio del seguimiento.",
-              "label": "timeout"
-            }
-          ],
-          "decision_type": "function",
-          "function_slug": "check-coverage"
-        },
-        "display_name": "Reanudacion 7",
-        "node_type": "decide"
-      },
-      "id": "fu-wr7",
-      "position": {
-        "x": 3240,
-        "y": 240
-      },
-      "type": "flow-node"
-    },
-    {
-      "data": {
-        "config": {
-          "conditions": [
-            {
-              "description": "Horario permitido en Peru: enviar el seguimiento ahora.",
-              "label": "enviar"
-            },
-            {
-              "description": "Horario de silencio (00:00-07:00 Peru): esperar y reintentar mas tarde.",
-              "label": "esperar"
-            }
-          ],
-          "decision_type": "function",
-          "function_slug": "check-coverage"
-        },
-        "display_name": "Horario 7",
-        "node_type": "decide"
-      },
-      "id": "fu-g7",
-      "position": {
-        "x": 3240,
-        "y": 380
-      },
-      "type": "flow-node"
-    },
-    {
-      "data": {
-        "config": {
-          "has_timeout": true,
-          "timeout_seconds": 1800
-        },
-        "display_name": "Espera horario 7",
-        "node_type": "wait_for_response"
-      },
-      "id": "fu-h7",
-      "position": {
-        "x": 3390,
-        "y": 380
-      },
-      "type": "flow-node"
-    },
-    {
-      "data": {
-        "config": {
-          "message": "Ultimo mensajito, prometido 🙏 {{vars.followup_hint}} Te lo dejo apartado al precio de hoy. Y para cuando quieras ver mas modelos con calma, aqui tienes nuestro catalogo: https://aurela.pe/collections/todos-los-productos 😊",
-          "phone_number_id": "1241790819006805"
-        },
-        "display_name": "Seguimiento 7",
-        "node_type": "send_text"
-      },
-      "id": "fu-s7",
-      "position": {
-        "x": 3240,
-        "y": 520
       },
       "type": "flow-node"
     },

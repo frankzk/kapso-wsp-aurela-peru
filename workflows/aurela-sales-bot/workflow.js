@@ -870,17 +870,22 @@ workflow.addEdge("init-hint", "sales-agent");
 const PHONE_NUMBER_ID = "1241790819006805";
 const HOLD_SECONDS = 1800; // re-chequeo cada 30 min durante horario de silencio
 
-// Escalera de valor (7 toques): cada recordatorio aporta un angulo NUEVO en vez
-// de repetir el mismo texto. El ultimo entra a las 23h, ANTES de que cierre la
-// ventana de servicio de 24h de WhatsApp.
+// Escalera de valor (6 toques efectivos): cada recordatorio aporta un angulo
+// NUEVO en vez de repetir el mismo texto. El ultimo entra a las 16h, con margen
+// holgado ANTES de la ventana de servicio de 24h de WhatsApp.
+// NOTA: habia un 7mo toque a las 23h que fallaba el 100% de las veces — a esa
+// hora, sumado a cualquier hold nocturno/throttle, se pasa de la ventana de 24h
+// y Meta rechaza el texto libre (regla de re-enganche), ademas de disparar un
+// email de "workflow failed" al dueno por cada intento. Se retira: el 7mo toque
+// real debe volver como PLANTILLA aprobada de WhatsApp (send_template), que si
+// puede enviarse fuera de 24h. Hasta entonces la escalera cierra en el paso 6.
 const FOLLOWUPS = [
   { step: 1, wait: 1200 },  // 20 min  - quitar friccion (duda)
   { step: 2, wait: 2400 },  // +40 min -> 1 h   - nota de voz (o texto)
   { step: 3, wait: 10800 }, // +3 h    -> 4 h   - prueba social / stock
   { step: 4, wait: 14400 }, // +4 h    -> 8 h   - promo 3x2 como oferta puntual
   { step: 5, wait: 14400 }, // +4 h    -> 12 h  - re-enviar FOTO del producto
-  { step: 6, wait: 14400 }, // +4 h    -> 16 h  - 10% dcto en 1 unidad (probar sin riesgo)
-  { step: 7, wait: 25200 }, // +7 h    -> 23 h  - cierre elegante + link del catalogo
+  { step: 6, wait: 14400 }, // +4 h    -> 16 h  - 10% dcto en 1 unidad (ultimo toque, cierre sin riesgo)
 ];
 
 const FOLLOWUP_MESSAGES = {
@@ -889,8 +894,7 @@ const FOLLOWUP_MESSAGES = {
   3: "{{vars.followup_hint}} 🔥 Es de lo mas pedido de la semana y el stock va volando. ¿Te aparto el tuyo?",
   4: "Te recuerdo que {{vars.followup_hint}} Con el *3x2* pagas 2 y llevas 3 🛍️ Si confirmas hoy, entra al despacho de mañana 🚚",
   5: "Te lo dejo de nuevo por aqui para que lo veas 😍 {{vars.followup_hint}}",
-  6: "¿Y si lo pruebas sin riesgo? 😊 Te doy *10% de descuento* llevando 1 unidad hoy, para que pruebes la experiencia Aurela. O si prefieres mas ahorro, el *3x2* sigue en pie. Responde *10%* o *3x2* y te lo dejo listo ✨",
-  7: "Ultimo mensajito, prometido 🙏 {{vars.followup_hint}} Te lo dejo apartado al precio de hoy. Y para cuando quieras ver mas modelos con calma, aqui tienes nuestro catalogo: https://aurela.pe/collections/todos-los-productos 😊",
+  6: "Ultimo empujon, prometido 🙏 Para que lo pruebes sin riesgo, te dejo *10% de descuento* llevando 1 unidad hoy (pagas al recibir y con *envio gratis* 📦). O si prefieres mas ahorro, el *3x2* sigue en pie. Responde *10%* o *3x2* y te lo dejo listo ✨",
 };
 
 // Media INTERCALADA en los seguimientos (via mini-agente, igual que el audio).

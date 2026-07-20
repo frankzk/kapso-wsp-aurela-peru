@@ -444,8 +444,8 @@ PEDIDO YA REGISTRADO (post-venta: el cliente YA tiene un pedido creado — stage
 - ENTREGA / "¿cuanto demora?" / "¿cuando llega?": NO vuelvas a cotizar el plazo "2 a 4 dias" desde cero — el pedido ya lleva dias en proceso, dar la ventana como si empezara HOY es un error. Reasegura que su pedido YA ESTA EN CAMINO y deberia estar por llegar, y que un asesor le escribe en un momento con la fecha exacta. Ej: "Tu pedido *#[codigo]* ya esta en camino 📦 — ya deberia estar por llegar. En un momento un asesor te confirma la fecha exacta de entrega 🙌". Si pregunta por que demora, explica breve (los envios a provincia salen de Lima) pero SIN repetir la ventana como si arrancara hoy. Si insiste en el estado/tracking exacto, llama notify_team (con el codigo #AUR + conversationId) para que un asesor le de el estado real, y avisale que en breve lo contactan.
 - VOUCHER / COMPROBANTE en CONTRAENTREGA: en contraentrega NO hay adelanto ni voucher — el cliente PAGA AL RECIBIR. NUNCA le pidas ni le menciones "enviar un voucher/captura" en un pedido contraentrega (eso es SOLO para Shalom/Olva). Si en un pedido contraentrega el cliente pide "el voucher/boucher/comprobante", entiende que quiere un comprobante de su compra: dale su *codigo de pedido #[AUR...]* como referencia y recuerdale que en su caso *paga al recibir* (no hay adelanto que enviar). Si pide boleta/factura formal, toma sus datos y pasa el pedido a un asesor con notify_team.
 `,
-    "provider_model_id": "de8992a1-6f21-4a30-9d37-f8645f66e14e",
-    "provider_model_name": "gpt-4.1",
+    "provider_model_id": "6172658f-422b-4224-8df3-d7795fbc5cc3",
+    "provider_model_name": "gpt-4.1-mini",
     "temperature": 0.2,
     "max_iterations": 80,
     "max_tokens": 8192,
@@ -942,8 +942,8 @@ function audioAgentConfig(audioUrl) {
         `usando esta URL como archivo de audio: ${audioUrl} (tipo de media: audio). ` +
         "No escribas ningun texto al cliente, no agregues caption, no llames otras herramientas. " +
         "Despues de enviar el audio, llama complete_task de inmediato.",
-      provider_model_id: "de8992a1-6f21-4a30-9d37-f8645f66e14e",
-      provider_model_name: "gpt-4.1",
+      provider_model_id: "cf09bcf3-647f-4692-a3f8-d38e5fc2e94f",
+      provider_model_name: "deepseek/deepseek-chat-v3.1",
       temperature: 0,
       max_iterations: 3,
       max_tokens: 512,
@@ -983,8 +983,8 @@ function mediaAgentConfig(descriptor) {
         task +
         "5) NUNCA escribas mensajes de texto al cliente, NUNCA pegues URLs como texto, NUNCA envies mas de una pieza de media. " +
         "6) Al final llama complete_task siempre.",
-      provider_model_id: "de8992a1-6f21-4a30-9d37-f8645f66e14e",
-      provider_model_name: "gpt-4.1",
+      provider_model_id: "cf09bcf3-647f-4692-a3f8-d38e5fc2e94f",
+      provider_model_name: "deepseek/deepseek-chat-v3.1",
       temperature: 0,
       max_iterations: 6,
       max_tokens: 1024,

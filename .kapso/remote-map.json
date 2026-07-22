@@ -15,26 +15,26 @@
     "campaign-report": {
       "files": {
         "functions/campaign-report/function.yaml": "0782343c0b02821e403bc1ea4aebf4d7d5865ce7ab3993830dd143fbe75267d8",
-        "functions/campaign-report/index.js": "6b7963caa83669b6bf45070d218c5818364b94176e06903e6998128c2aab4775"
+        "functions/campaign-report/index.js": "8f8bd14396934f9e041ec88c392cf2947c13d69295235c602edd0e6926ab6424"
       },
       "id": "b9b96196-14f5-4ba0-8bd8-d48b0334d292",
-      "lastDeployedAt": "2026-07-16T17:41:55-04:00",
-      "lockVersion": 26,
+      "lastDeployedAt": "2026-07-21T22:23:54-04:00",
+      "lockVersion": 28,
       "slug": "campaign-report",
       "status": "deployed",
-      "updatedAt": "2026-07-16T17:41:55-04:00"
+      "updatedAt": "2026-07-21T22:23:54-04:00"
     },
     "check-coverage": {
       "files": {
         "functions/check-coverage/function.yaml": "e7ebba4fca4791549ae0e443805460668199d908dcf0622cf972e894bb13c9ab",
-        "functions/check-coverage/index.js": "6da38bd00bdb56c51d5194f41a3d240b5f667540dd6c477557c0e26f6338a86e"
+        "functions/check-coverage/index.js": "441c4b9106526c8815a87045c5bcf4f09a87c1f5c1215f2379f04d8984047c24"
       },
       "id": "f9ddb618-7f39-4ee3-af23-4d9733ba5d55",
-      "lastDeployedAt": "2026-07-11T01:15:50-04:00",
-      "lockVersion": 74,
+      "lastDeployedAt": "2026-07-21T22:23:57-04:00",
+      "lockVersion": 76,
       "slug": "check-coverage",
       "status": "deployed",
-      "updatedAt": "2026-07-11T01:15:50-04:00"
+      "updatedAt": "2026-07-21T22:23:57-04:00"
     },
     "create-shopify-order": {
       "files": {
@@ -51,14 +51,14 @@
     "notify-team": {
       "files": {
         "functions/notify-team/function.yaml": "44aae76e429b5bc3b31b46e1a582322187b291554023c63075563480dd135b37",
-        "functions/notify-team/index.js": "53d0af9e06a1d6fca3c64fdb4fed780389dedf123ddaf23a2d0139c7fdff2aea"
+        "functions/notify-team/index.js": "d640bd6f7c8a9af3f12081340a456153e6ec3bb86e680b2fbdb9b49020d836c8"
       },
       "id": "fc7a67ec-dc65-420f-8cf5-79a0be4b032b",
-      "lastDeployedAt": "2026-07-12T10:33:05-04:00",
-      "lockVersion": 5,
+      "lastDeployedAt": "2026-07-21T22:23:43-04:00",
+      "lockVersion": 7,
       "slug": "notify-team",
       "status": "deployed",
-      "updatedAt": "2026-07-12T10:33:05-04:00"
+      "updatedAt": "2026-07-21T22:23:43-04:00"
     },
     "product-media-lookup": {
       "files": {

@@ -872,13 +872,18 @@ async function watchdogSweep(cfg, env, now) {
 
   const lines = fresh.map((c) => `• *${c.name}* (+${c.phone}) — ${c.minutes} min esperando\n  _"${c.text}"_`);
   const text = `⚠️ *Clientes esperando respuesta* (bot en silencio >15 min)\n\n${lines.join("\n")}\n\nEntra a Kapso para atenderlos.`;
-  try {
-    await fetch(`https://api.telegram.org/bot${cfg.telegramToken}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: cfg.telegramChatId, text, parse_mode: "Markdown" })
-    });
-  } catch {}
+  // Destinatario(s) principal(es) + adicionales fijos (cada uno debe haber iniciado el bot).
+  const EXTRA_TELEGRAM_CHAT_IDS = ["8844863582"];
+  const wdRecipients = [...new Set([cfg.telegramChatId, ...EXTRA_TELEGRAM_CHAT_IDS].filter(Boolean).map((s) => String(s)))];
+  for (const chatId of wdRecipients) {
+    try {
+      await fetch(`https://api.telegram.org/bot${cfg.telegramToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" })
+      });
+    } catch {}
+  }
   return { ran: true, candidates: candidates.length, alerted: fresh.length };
 }
 

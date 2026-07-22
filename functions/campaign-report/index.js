@@ -836,11 +836,28 @@ function html(markup, status = 200) {
 // Resumen a Telegram (job diario)
 // ---------------------------------------------------------------------------
 
+// Destinatarios adicionales de Telegram, ademas del TELEGRAM_CHAT_ID configurado.
+// Best-effort; cada usuario debe haber iniciado el bot (Start) para recibir.
+const EXTRA_TELEGRAM_CHAT_IDS = ["8844863582"];
+async function sendTelegramExtras(token, text, opts = {}) {
+  if (!token) return;
+  for (const chatId of EXTRA_TELEGRAM_CHAT_IDS) {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text, ...opts }),
+      });
+    } catch {}
+  }
+}
+
 async function sendTelegramSummary(config, report) {
   if (!config.telegramToken || !config.telegramChatId) {
     return { ok: false, reason: "missing_telegram_config" };
   }
   const text = buildTelegramSummary(report);
+  await sendTelegramExtras(config.telegramToken, text, { parse_mode: "HTML", disable_web_page_preview: true });
   try {
     const res = await fetch(`https://api.telegram.org/bot${config.telegramToken}/sendMessage`, {
       method: "POST",

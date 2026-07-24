@@ -280,7 +280,7 @@ async function buildOrderInput(config, input, options = {}) {
     shippingAddress,
     billingAddress,
     tags: buildTags(input),
-    note: buildNote(input, customerLookup),
+    note: buildNote(input),
     financialStatus: "PENDING",
     presentmentCurrency: "PEN",
   };
@@ -741,14 +741,41 @@ function buildAddress(customer, input = {}) {
   const nameParts = splitCustomerName(customer.name || customer.fullName || customer.full_name || "");
   const firstName = nameParts.firstName || "Cliente";
   const lastName = nameParts.lastName || "Aurela";
+
+  const coverage = input.coverage || {};
+  const address1 = String(customer.address || customer.direccion || "").trim();
+
+  // 1) Campos estructurados (customer, coverage, input) — la fuente confiable.
+  let city = String(customer.district || customer.distrito || coverage.district || coverage.distrito || input.district || input.distrito || "").trim();
+  let province = String(customer.province || customer.provincia || coverage.province || coverage.provincia || input.province || input.provincia || "").trim();
+
+  // 2) Respaldo: si faltan y hay texto de direccion, extraer de los ultimos
+  // segmentos separados por coma. 3+ segmentos: penultimo=distrito, ultimo=provincia.
+  // 2 segmentos: ultimo=distrito. Limpia parentesis del tipo "(provincia)".
+  if ((!city || !province) && address1) {
+    const segs = address1
+      .split(",")
+      .map((s) => s.replace(/[()]/g, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    if (segs.length >= 3) {
+      if (!city) city = segs[segs.length - 2];
+      if (!province) province = segs[segs.length - 1];
+    } else if (segs.length === 2) {
+      if (!city) city = segs[segs.length - 1];
+    }
+  }
+
+  // 3) Nunca dejar city vacio: Shopify no puebla la direccion sin city.
+  if (!city) city = province || "Por coordinar";
+
   return {
     firstName,
     lastName,
     phone: normalizePhone(customer.phone || input.phone),
-    address1: customer.address || customer.direccion || "Por coordinar",
+    address1: address1 || "Por coordinar",
     address2: customer.reference || customer.referencia || "",
-    city: customer.district || customer.distrito || "",
-    province: customer.province || customer.provincia || "",
+    city,
+    province,
     country: "PE",
     zip: "",
   };
@@ -799,32 +826,39 @@ function buildTags(input) {
   return [...tags];
 }
 
-function buildNote(input, customerLookup) {
+// Nota corta para logistica: solo lo que se necesita de un vistazo. Se omiten
+// datos que Shopify ya muestra en otros bloques (total, ids, customer id) y las
+// lineas vacias. La direccion SI se conserva aqui porque el campo estructurado
+// a veces queda incompleto.
+function buildNote(input) {
   const customer = input.customer || {};
-  const quote = input.quote || {};
+  const coverage = input.coverage || {};
+  const mode = String(coverage.shippingMode || coverage.shipping_mode || "").toLowerCase();
+  const pago = /agenc|shalom|olva/.test(mode)
+    ? "Envio por agencia (adelanto + saldo)"
+    : "Contraentrega (efectivo o Yape)";
+
+  const nombre = String(customer.name || customer.fullName || customer.full_name || "").trim();
+  const tel = String(customer.phone || input.phone || "").trim();
+  const dir = String(customer.address || customer.direccion || "").trim();
+  const ref = String(customer.reference || customer.referencia || "").trim();
+  const distrito = String(customer.district || customer.distrito || "").trim();
+  const provincia = String(customer.province || customer.provincia || "").trim();
+
   const lines = [
-    "Pedido creado desde WhatsApp/Kapso.",
+    `Pedido WhatsApp/Kapso · ${pago}`,
     `Producto(s): ${summaryLine(input.lineItems || input.items || [])}`,
-    `Total cotizado: S/ ${formatMoney(quote.total || 0)}`,
-    "Metodo: Contraentrega - efectivo o Yape",
-    `Cliente: ${customer.name || customer.fullName || ""}`,
-    `Telefono: ${customer.phone || input.phone || ""}`,
-    `Distrito: ${customer.district || customer.distrito || ""}`,
-    `Provincia: ${customer.province || customer.provincia || ""}`,
-    `Region: ${customer.region || customer.departamento || ""}`,
-    `Direccion: ${customer.address || customer.direccion || ""}`,
-    `Referencia: ${customer.reference || customer.referencia || ""}`,
   ];
 
-  if (customerLookup?.customerId) {
-    lines.push(`Shopify customer: ${customerLookup.customerId} (${customerLookup.status})`);
-  } else if (customerLookup?.status) {
-    lines.push(`Shopify customer lookup: ${customerLookup.status}`);
-  }
+  const contacto = [nombre, tel].filter(Boolean).join(" · ");
+  if (contacto) lines.push(`Contacto: ${contacto}`);
+
+  const zona = [distrito, provincia].filter(Boolean).join(", ");
+  const entrega = [dir, ref ? `Ref: ${ref}` : "", zona].filter(Boolean).join(" · ");
+  if (entrega) lines.push(`Entrega: ${entrega}`);
 
   const specialNote = sanitizeNoteText(input.specialDeliveryNote || input.special_delivery_note);
   if (specialNote) lines.push(`Fecha/hora solicitada: ${specialNote}`);
-  if (input.conversationId) lines.push(`Kapso conversation: ${input.conversationId}`);
   return lines.filter(Boolean).join("\n");
 }
 
@@ -1021,6 +1055,8 @@ function safeError(error) {
 }
 
 globalThis.__aurelaCreateShopifyOrder = {
+  buildAddress,
+  buildNote,
   buildOrderInput,
   computePricing,
   countFreeUnits,

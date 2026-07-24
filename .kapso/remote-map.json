@@ -39,14 +39,14 @@
     "create-shopify-order": {
       "files": {
         "functions/create-shopify-order/function.yaml": "3e494fc64791dbc4d1a1882224d11df9efcdc6b71af262f0e8bc048a3a50c1f2",
-        "functions/create-shopify-order/index.js": "9981488de2bb7ba13e576f86d3ea125bee44e062be6cb5e38e48ca060ccb1252"
+        "functions/create-shopify-order/index.js": "88c4a2eb97c23cc9b52a863e27565510a16299b4a378a97474c5de21711f375b"
       },
       "id": "7b63c9c1-4405-4e86-876a-f7fccf7daa12",
-      "lastDeployedAt": "2026-07-02T01:23:50-04:00",
-      "lockVersion": 53,
+      "lastDeployedAt": "2026-07-24T16:01:33-04:00",
+      "lockVersion": 55,
       "slug": "create-shopify-order",
       "status": "deployed",
-      "updatedAt": "2026-07-02T01:23:50-04:00"
+      "updatedAt": "2026-07-24T16:01:33-04:00"
     },
     "notify-team": {
       "files": {

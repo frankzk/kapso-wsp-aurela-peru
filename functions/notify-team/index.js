@@ -22,6 +22,43 @@ async function sendTelegramExtras(token, text, opts = {}) {
   }
 }
 
+// Firma HMAC-SHA256 (hex) del cuerpo con el secret, para que el dashboard pueda
+// validar el POST igual que valida los webhooks de Kapso. Best-effort.
+async function hmacHex(secret, body) {
+  try {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
+    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return "";
+  }
+}
+
+// Aviso al dashboard de la tienda cuando el bot deriva a un humano (handoff).
+// Best-effort: no afecta el retorno de notify-team ni el envio a Telegram. La URL
+// y el secret se leen del entorno (runtime_config en Kapso), nunca hardcodeados.
+async function postStoreHandoff(config, ctx, payload) {
+  const url = config.storeWebhookUrl;
+  if (!url) return;
+  const body = JSON.stringify({
+    event: "workflow.execution.handoff",
+    phone_number: ctx.phone || "",
+    conversation_id: ctx.convId || "",
+    reason: String(payload.reason || "").trim(),
+    context_summary: String(payload.note || payload.context_summary || "").replace(/\s+/g, " ").trim(),
+  });
+  const headers = { "Content-Type": "application/json" };
+  if (config.storeWebhookSecret) {
+    headers["X-Webhook-Secret"] = config.storeWebhookSecret;
+    const sig = await hmacHex(config.storeWebhookSecret, body);
+    if (sig) headers["X-Kapso-Signature"] = sig;
+  }
+  try {
+    await fetch(url, { method: "POST", headers, body });
+  } catch {}
+}
+
 async function handler(request, env = globalThis) {
   return handleRequest(request, env);
 }
@@ -35,13 +72,17 @@ if (typeof addEventListener === "function") {
 async function handleRequest(request, env = globalThis) {
   const payload = await readJson(request);
   const config = getConfig(env);
+  const ctx = deriveContext(payload);
+
+  // Aviso al dashboard de la tienda (handoff). Independiente de Telegram: se
+  // dispara aunque falte la config de Telegram.
+  await postStoreHandoff(config, ctx, payload);
 
   if (!config.token || !config.chatId) {
     // Falta credencial: no rompas el flujo, solo reporta ok=false (sin filtrar el token).
     return json({ ok: false, reason: "missing_telegram_config" });
   }
 
-  const ctx = deriveContext(payload);
   const text = buildMessage(payload, ctx);
 
   await sendTelegramExtras(config.token, text, { parse_mode: "HTML", disable_web_page_preview: true });
@@ -189,7 +230,15 @@ function getConfig(env = globalThis) {
     env.tELEGRAMCHATID ||
     globalThis.TELEGRAM_CHAT_ID ||
     globalThis.tELEGRAMCHATID;
-  return { token, chatId };
+  // URL + secret del dashboard de la tienda (runtime_config en Kapso). Kapso
+  // expone las claves con la primera letra en minuscula (sTOREWEBHOOKURL).
+  const storeWebhookUrl =
+    env.STORE_WEBHOOK_URL || env.sTOREWEBHOOKURL ||
+    globalThis.STORE_WEBHOOK_URL || globalThis.sTOREWEBHOOKURL || "";
+  const storeWebhookSecret =
+    env.STORE_WEBHOOK_SECRET || env.sTOREWEBHOOKSECRET ||
+    globalThis.STORE_WEBHOOK_SECRET || globalThis.sTOREWEBHOOKSECRET || "";
+  return { token, chatId, storeWebhookUrl, storeWebhookSecret };
 }
 
 async function readJson(request) {

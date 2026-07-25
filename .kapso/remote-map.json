@@ -51,14 +51,14 @@
     "notify-team": {
       "files": {
         "functions/notify-team/function.yaml": "44aae76e429b5bc3b31b46e1a582322187b291554023c63075563480dd135b37",
-        "functions/notify-team/index.js": "d640bd6f7c8a9af3f12081340a456153e6ec3bb86e680b2fbdb9b49020d836c8"
+        "functions/notify-team/index.js": "5cec2cc06066bfaa70ac3e9b5f7fb13cde51907fc77de5d15727b34589d73cf9"
       },
       "id": "fc7a67ec-dc65-420f-8cf5-79a0be4b032b",
-      "lastDeployedAt": "2026-07-21T22:23:43-04:00",
-      "lockVersion": 7,
+      "lastDeployedAt": "2026-07-24T21:21:16-04:00",
+      "lockVersion": 9,
       "slug": "notify-team",
       "status": "deployed",
-      "updatedAt": "2026-07-21T22:23:43-04:00"
+      "updatedAt": "2026-07-24T21:21:16-04:00"
     },
     "product-media-lookup": {
       "files": {

@@ -722,7 +722,7 @@ function json(body, status = 200) {
 }
 
 const WATCHDOG_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
-const WATCHDOG_MIN_SILENCE_MS = 15 * 60 * 1000;
+const WATCHDOG_MIN_SILENCE_MS = 3 * 60 * 1000;
 const WATCHDOG_MAX_SILENCE_MS = 6 * 60 * 60 * 1000;
 const WATCHDOG_ALERT_TTL_S = 6 * 60 * 60;
 const WATCHDOG_PHONE_IDS = ["1241790819006805", "1022274334303691"];
@@ -750,7 +750,10 @@ async function watchdogConfig(env) {
     kapsoApiKey: g("KAPSO_API_KEY", "kAPSOAPIKEY"),
     kapsoApiBase: g("KAPSO_API_BASE", "kAPSOAPIBASE") || "https://api.kapso.ai",
     telegramToken: g("TELEGRAM_BOT_TOKEN", "tELEGRAMBOTTOKEN"),
-    telegramChatId: g("TELEGRAM_CHAT_ID", "tELEGRAMCHATID")
+    telegramChatId: g("TELEGRAM_CHAT_ID", "tELEGRAMCHATID"),
+    // Webhook del dashboard de la tienda (POST por cada cliente esperando).
+    storeWebhookUrl: g("STORE_WEBHOOK_URL", "sTOREWEBHOOKURL") || "",
+    storeWebhookSecret: g("STORE_WEBHOOK_SECRET", "sTOREWEBHOOKSECRET") || "",
   };
   if (env?.KV && (!cfg.kapsoApiKey || !cfg.telegramToken || !cfg.telegramChatId)) {
     try {
@@ -870,8 +873,14 @@ async function watchdogSweep(cfg, env, now) {
   }
   if (fresh.length === 0) return { ran: true, candidates: candidates.length, alerted: 0 };
 
+  // Aviso al dashboard de la tienda por cada cliente esperando (best-effort,
+  // antes del envio a Telegram). No-op si no hay STORE_WEBHOOK_URL configurada.
+  for (const c of fresh) {
+    await postWaitingAlert(cfg, c);
+  }
+
   const lines = fresh.map((c) => `• *${c.name}* (+${c.phone}) — ${c.minutes} min esperando\n  _"${c.text}"_`);
-  const text = `⚠️ *Clientes esperando respuesta* (bot en silencio >15 min)\n\n${lines.join("\n")}\n\nEntra a Kapso para atenderlos.`;
+  const text = `⚠️ *Clientes esperando respuesta* (bot en silencio >3 min)\n\n${lines.join("\n")}\n\nEntra a Kapso para atenderlos.`;
   // Destinatario(s) principal(es) + adicionales fijos (cada uno debe haber iniciado el bot).
   const EXTRA_TELEGRAM_CHAT_IDS = ["8844863582"];
   const wdRecipients = [...new Set([cfg.telegramChatId, ...EXTRA_TELEGRAM_CHAT_IDS].filter(Boolean).map((s) => String(s)))];
@@ -885,6 +894,44 @@ async function watchdogSweep(cfg, env, now) {
     } catch {}
   }
   return { ran: true, candidates: candidates.length, alerted: fresh.length };
+}
+
+// Firma HMAC-SHA256 (hex) del cuerpo con el secret, para que el dashboard valide
+// el POST igual que valida los webhooks de Kapso. Best-effort.
+async function hmacHex(secret, body) {
+  try {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
+    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return "";
+  }
+}
+
+// POST al dashboard por un cliente que quedo esperando (bot en silencio). URL y
+// secret salen del entorno (STORE_WEBHOOK_URL / STORE_WEBHOOK_SECRET); si no hay
+// URL es no-op. No afecta el envio a Telegram.
+async function postWaitingAlert(cfg, c) {
+  const url = cfg.storeWebhookUrl;
+  if (!url) return;
+  const body = JSON.stringify({
+    event: "conversation.waiting",
+    phone_number: c.phone || "",
+    conversation_id: c.id || "",
+    reason: "bot_silent",
+    context_summary: String(c.text || "").replace(/\s+/g, " ").trim(),
+    minutes_waiting: c.minutes,
+  });
+  const headers = { "Content-Type": "application/json" };
+  if (cfg.storeWebhookSecret) {
+    headers["X-Webhook-Secret"] = cfg.storeWebhookSecret;
+    const sig = await hmacHex(cfg.storeWebhookSecret, body);
+    if (sig) headers["X-Kapso-Signature"] = sig;
+  }
+  try {
+    await fetch(url, { method: "POST", headers, body });
+  } catch {}
 }
 
 async function watchdogAdmin(payload, env) {
@@ -914,6 +961,8 @@ globalThis.__aurelaCheckCoverage = {
   maybeRunDailyDigest,
   watchdogSweep,
   watchdogConfig,
+  postWaitingAlert,
+  hmacHex,
   followupThrottleAllows,
   extractConversationId,
   extractCustomerPhone,

@@ -27,14 +27,14 @@
     "check-coverage": {
       "files": {
         "functions/check-coverage/function.yaml": "e7ebba4fca4791549ae0e443805460668199d908dcf0622cf972e894bb13c9ab",
-        "functions/check-coverage/index.js": "441c4b9106526c8815a87045c5bcf4f09a87c1f5c1215f2379f04d8984047c24"
+        "functions/check-coverage/index.js": "3e5eb40c68ca5915e8d8aaa05dc2a532e1f9f5f64053b5f46345702371b2c934"
       },
       "id": "f9ddb618-7f39-4ee3-af23-4d9733ba5d55",
-      "lastDeployedAt": "2026-07-21T22:23:57-04:00",
-      "lockVersion": 76,
+      "lastDeployedAt": "2026-07-26T12:19:38-04:00",
+      "lockVersion": 78,
       "slug": "check-coverage",
       "status": "deployed",
-      "updatedAt": "2026-07-21T22:23:57-04:00"
+      "updatedAt": "2026-07-26T12:19:38-04:00"
     },
     "create-shopify-order": {
       "files": {

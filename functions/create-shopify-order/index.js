@@ -271,19 +271,19 @@ async function buildOrderInput(config, input, options = {}) {
     createMissingCustomer: options.createMissingCustomer === true,
   });
 
-  const giftItems = giftLineItems(lineItems);
+  const giftResult = giftLineItems(lineItems);
   const order = {
     lineItems: [
       ...lineItems.map((item) => ({
         variantId: item.variantId,
         quantity: item.quantity,
       })),
-      ...giftItems,
+      ...giftResult.items,
     ],
     phone: normalizePhone(customer.phone || input.phone || shippingAddress.phone),
     shippingAddress,
     billingAddress,
-    tags: giftItems.length ? [...buildTags(input), "regalo-eggmixer"] : buildTags(input),
+    tags: [...buildTags(input), ...giftResult.tags],
     note: buildNote(input),
     financialStatus: "PENDING",
     presentmentCurrency: "PEN",
@@ -870,22 +870,44 @@ function summaryLine(items) {
   return items.map((item) => `${item.quantity || 1} x ${item.productTitle || item.title || item.variantTitle || item.variantId}`).join("; ");
 }
 
-// --- Escalera de regalos por cantidad (EggMixer) --- determinista, no depende del LLM.
-// Segun cuantos sets de EggMixer haya en el pedido, agrega regalos GRATIS (S/0):
-//   1 set -> Papel Freidora | 3 sets -> +Malla Coladora | 5 sets -> +CrabHolder.
-const GIFT_TRIGGER_VARIANT = "gid://shopify/ProductVariant/44255967740124"; // EggMixer - Pack de 2 Batidores
-const GIFT_TIERS = [
-  { min: 5, gifts: ["gid://shopify/ProductVariant/43391484657884", "gid://shopify/ProductVariant/40428462604476", "gid://shopify/ProductVariant/44288695337180"] },
-  { min: 3, gifts: ["gid://shopify/ProductVariant/43391484657884", "gid://shopify/ProductVariant/40428462604476"] },
-  { min: 1, gifts: ["gid://shopify/ProductVariant/43391484657884"] },
+// --- Escaleras de regalos por cantidad --- deterministas, no dependen del LLM.
+// Por producto: segun cuantas unidades/sets haya en el pedido se agregan regalos
+// GRATIS (S/0) con su cantidad. triggers lista TODAS las variantes del producto
+// (colores), asi aplica sin importar el color elegido.
+const GIFT_LADDERS = [
+  {
+    tag: "regalo-eggmixer",
+    triggers: ["gid://shopify/ProductVariant/44255967740124"],
+    tiers: [
+      { min: 5, gifts: [{ v: "gid://shopify/ProductVariant/43391484657884", q: 1 }, { v: "gid://shopify/ProductVariant/40428462604476", q: 1 }, { v: "gid://shopify/ProductVariant/44288695337180", q: 1 }] },
+      { min: 3, gifts: [{ v: "gid://shopify/ProductVariant/43391484657884", q: 1 }, { v: "gid://shopify/ProductVariant/40428462604476", q: 1 }] },
+      { min: 1, gifts: [{ v: "gid://shopify/ProductVariant/43391484657884", q: 1 }] },
+    ],
+  },
+  {
+    tag: "regalo-suntent",
+    triggers: ["gid://shopify/ProductVariant/44036950622428","gid://shopify/ProductVariant/45049209258204","gid://shopify/ProductVariant/45049209290972","gid://shopify/ProductVariant/44036950589660"],
+    tiers: [
+      { min: 5, gifts: [{ v: "gid://shopify/ProductVariant/52424310489308", q: 2 }, { v: "gid://shopify/ProductVariant/52424314912988", q: 2 }] },
+      { min: 3, gifts: [{ v: "gid://shopify/ProductVariant/52424314912988", q: 2 }, { v: "gid://shopify/ProductVariant/52424310489308", q: 1 }] },
+      { min: 1, gifts: [{ v: "gid://shopify/ProductVariant/52424310489308", q: 1 }, { v: "gid://shopify/ProductVariant/52424314912988", q: 1 }] },
+    ],
+  },
 ];
 function giftLineItems(lineItems) {
-  const qty = (lineItems || [])
-    .filter((it) => String(it.variantId) === GIFT_TRIGGER_VARIANT)
-    .reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
-  if (qty < 1) return [];
-  const tier = GIFT_TIERS.find((t) => qty >= t.min);
-  return tier ? tier.gifts.map((vid) => ({ variantId: vid, quantity: 1, priceSet: moneySet(0) })) : [];
+  const items = [];
+  const tags = [];
+  for (const ladder of GIFT_LADDERS) {
+    const qty = (lineItems || [])
+      .filter((it) => ladder.triggers.includes(String(it.variantId)))
+      .reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+    if (qty < 1) continue;
+    const tier = ladder.tiers.find((t) => qty >= t.min);
+    if (!tier) continue;
+    for (const g of tier.gifts) items.push({ variantId: g.v, quantity: g.q, priceSet: moneySet(0) });
+    tags.push(ladder.tag);
+  }
+  return { items, tags };
 }
 
 function moneySet(amount) {

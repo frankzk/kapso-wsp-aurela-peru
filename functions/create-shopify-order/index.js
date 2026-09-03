@@ -271,15 +271,19 @@ async function buildOrderInput(config, input, options = {}) {
     createMissingCustomer: options.createMissingCustomer === true,
   });
 
+  const giftItems = giftLineItems(lineItems);
   const order = {
-    lineItems: lineItems.map((item) => ({
-      variantId: item.variantId,
-      quantity: item.quantity,
-    })),
+    lineItems: [
+      ...lineItems.map((item) => ({
+        variantId: item.variantId,
+        quantity: item.quantity,
+      })),
+      ...giftItems,
+    ],
     phone: normalizePhone(customer.phone || input.phone || shippingAddress.phone),
     shippingAddress,
     billingAddress,
-    tags: buildTags(input),
+    tags: giftItems.length ? [...buildTags(input), "regalo-eggmixer"] : buildTags(input),
     note: buildNote(input),
     financialStatus: "PENDING",
     presentmentCurrency: "PEN",
@@ -864,6 +868,24 @@ function buildNote(input) {
 
 function summaryLine(items) {
   return items.map((item) => `${item.quantity || 1} x ${item.productTitle || item.title || item.variantTitle || item.variantId}`).join("; ");
+}
+
+// --- Escalera de regalos por cantidad (EggMixer) --- determinista, no depende del LLM.
+// Segun cuantos sets de EggMixer haya en el pedido, agrega regalos GRATIS (S/0):
+//   1 set -> Papel Freidora | 3 sets -> +Malla Coladora | 5 sets -> +CrabHolder.
+const GIFT_TRIGGER_VARIANT = "gid://shopify/ProductVariant/44255967740124"; // EggMixer - Pack de 2 Batidores
+const GIFT_TIERS = [
+  { min: 5, gifts: ["gid://shopify/ProductVariant/43391484657884", "gid://shopify/ProductVariant/40428462604476", "gid://shopify/ProductVariant/44288695337180"] },
+  { min: 3, gifts: ["gid://shopify/ProductVariant/43391484657884", "gid://shopify/ProductVariant/40428462604476"] },
+  { min: 1, gifts: ["gid://shopify/ProductVariant/43391484657884"] },
+];
+function giftLineItems(lineItems) {
+  const qty = (lineItems || [])
+    .filter((it) => String(it.variantId) === GIFT_TRIGGER_VARIANT)
+    .reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+  if (qty < 1) return [];
+  const tier = GIFT_TIERS.find((t) => qty >= t.min);
+  return tier ? tier.gifts.map((vid) => ({ variantId: vid, quantity: 1, priceSet: moneySet(0) })) : [];
 }
 
 function moneySet(amount) {

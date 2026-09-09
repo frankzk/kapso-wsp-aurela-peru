@@ -727,6 +727,17 @@ const WATCHDOG_MAX_SILENCE_MS = 6 * 60 * 60 * 1000;
 const WATCHDOG_ALERT_TTL_S = 6 * 60 * 60;
 const WATCHDOG_PHONE_IDS = ["1241790819006805", "1022274334303691"];
 const WATCHDOG_MAX_ALERTS = 6;
+// Guard de ejecuciones caidas: si un paso de la escalera de seguimiento falla
+// (tipico: Meta rechaza el envio, error 131049 "healthy ecosystem engagement"),
+// la ejecucion entera muere y el lead se queda sin los toques restantes, en
+// silencio. No hay rama de error en el workflow, asi que el guard no repara la
+// ejecucion: la detecta y la levanta al equipo (Telegram + dashboard) para que
+// cierren a mano. Se dedupe por ejecucion en KV.
+const WATCHDOG_WORKFLOW_ID = "9c2ad1b6-c99c-432a-ba19-42882d07bd5d";
+const FAILED_EXEC_TTL_S = 24 * 60 * 60;
+const FAILED_EXEC_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const FAILED_EXEC_MAX_ALERTS = 5;
+const FAILED_EXEC_PAGES = 5;
 const WATCHDOG_TRIVIAL_WORDS = new Set([
   "ok", "okey", "oki", "okis", "ya", "listo", "lista", "gracias", "muchas",
   "mil", "si", "no", "buenas", "buenos", "noches", "dias", "dia", "buen",
@@ -827,7 +838,107 @@ async function maybeRunWatchdog(env, { force = false } = {}) {
   await env.KV.put("watchdog:last_sweep", String(now), { expirationTtl: 3600 });
   const cfg = await watchdogConfig(env);
   if (!cfg.kapsoApiKey || !cfg.telegramToken || !cfg.telegramChatId) return { ran: false, reason: "missing_credentials" };
-  return watchdogSweep(cfg, env, now);
+  const swept = await watchdogSweep(cfg, env, now);
+  // Guard aparte: no debe poder romper el sweep de clientes esperando.
+  let failedExecs = null;
+  try { failedExecs = await watchdogFailedExecutions(cfg, env, now); } catch { failedExecs = { error: true }; }
+  return { ...swept, failedExecs };
+}
+
+// Barre las ejecuciones del sales bot en estado "failed" y avisa por cada una
+// que no se haya avisado antes. Best-effort de punta a punta.
+async function watchdogFailedExecutions(cfg, env, now) {
+  if (!env?.KV) return { ran: false, reason: "no_kv" };
+  // Ojo: las ejecuciones fallidas quedan mezcladas entre cientos de ejecuciones
+  // vivas (waiting), asi que una sola pagina de 100 no alcanza — la caida del
+  // 9-sep aparecia en la posicion 134. Se recorren varias paginas.
+  const rows = [];
+  let cursor = null;
+  for (let page = 0; page < FAILED_EXEC_PAGES; page += 1) {
+    let url = `${cfg.kapsoApiBase}/platform/v1/workflows/${WATCHDOG_WORKFLOW_ID}/executions?limit=100`;
+    if (cursor) url += `&after=${encodeURIComponent(cursor)}`;
+    let payload;
+    try {
+      const res = await fetch(url, { headers: { "X-API-Key": cfg.kapsoApiKey } });
+      if (!res.ok) { if (!rows.length) return { ran: false, reason: "http_" + res.status }; break; }
+      payload = await res.json();
+    } catch { if (!rows.length) return { ran: false, reason: "request_failed" }; break; }
+    const data = payload?.data || [];
+    rows.push(...data);
+    cursor = payload?.paging?.cursors?.after || null;
+    if (!cursor || !data.length) break;
+  }
+
+  const fresh = [];
+  for (const e of rows) {
+    if (e?.status !== "failed") continue;
+    const endedAt = Date.parse(e.ended_at || e.last_event_at || "");
+    if (Number.isFinite(endedAt) && now - endedAt > FAILED_EXEC_MAX_AGE_MS) continue;
+    const key = `watchdog:failedexec:${e.id}`;
+    try { if (await env.KV.get(key)) continue; } catch { continue; }
+    try { await env.KV.put(key, "1", { expirationTtl: FAILED_EXEC_TTL_S }); } catch {}
+    fresh.push({
+      id: e.id,
+      step: (e.current_step || {}).identifier || "?",
+      convId: e.whatsapp_conversation_id || "",
+      endedAt: e.ended_at || "",
+    });
+    if (fresh.length >= FAILED_EXEC_MAX_ALERTS) break;
+  }
+  if (!fresh.length) return { ran: true, alerted: 0 };
+
+  // Telefono/nombre del cliente (sin el, el aviso no sirve para atenderlo).
+  for (const f of fresh) {
+    if (!f.convId) continue;
+    try {
+      const res = await fetch(`${cfg.kapsoApiBase}/platform/v1/whatsapp/conversations/${f.convId}`, { headers: { "X-API-Key": cfg.kapsoApiKey } });
+      if (!res.ok) continue;
+      const body = await res.json();
+      const c = body?.data || body || {};
+      f.phone = c.phone_number || "";
+      f.name = (c.kapso || {}).contact_name || f.phone || "";
+    } catch {}
+  }
+
+  for (const f of fresh) await postExecutionFailed(cfg, f);
+
+  const lines = fresh.map((f) => {
+    const who = f.phone ? `*${f.name || f.phone}* (+${f.phone})` : `conversacion \`${f.convId || "?"}\``;
+    return `• ${who}\n  paso \`${f.step}\` — el seguimiento se corto aqui`;
+  });
+  const text = `🛑 *Seguimiento cortado por un fallo de envio*\n\n${lines.join("\n")}\n\nEstos leads NO van a recibir los toques que faltaban. Escribiles a mano desde Kapso.`;
+  const EXTRA_TELEGRAM_CHAT_IDS = ["8844863582"];
+  const recipients = [...new Set([cfg.telegramChatId, ...EXTRA_TELEGRAM_CHAT_IDS].filter(Boolean).map((x) => String(x)))];
+  for (const chatId of recipients) {
+    try {
+      await fetch(`https://api.telegram.org/bot${cfg.telegramToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" })
+      });
+    } catch {}
+  }
+  return { ran: true, alerted: fresh.length };
+}
+
+// POST al dashboard por cada ejecucion caida, con la misma firma que el resto.
+async function postExecutionFailed(cfg, f) {
+  const url = cfg.storeWebhookUrl;
+  if (!url) return;
+  const body = JSON.stringify({
+    event: "workflow.execution.failed",
+    phone_number: f.phone || "",
+    conversation_id: f.convId || "",
+    reason: "followup_send_failed",
+    context_summary: `La ejecucion murio en el paso ${f.step}; el cliente no recibira los seguimientos restantes.`,
+  });
+  const headers = { "Content-Type": "application/json" };
+  if (cfg.storeWebhookSecret) {
+    headers["X-Webhook-Secret"] = cfg.storeWebhookSecret;
+    const sig = await hmacHex(cfg.storeWebhookSecret, body);
+    if (sig) headers["X-Kapso-Signature"] = sig;
+  }
+  try { await fetch(url, { method: "POST", headers, body }); } catch {}
 }
 
 async function watchdogSweep(cfg, env, now) {
@@ -960,6 +1071,8 @@ globalThis.__aurelaCheckCoverage = {
   maybeRunWatchdog,
   maybeRunDailyDigest,
   watchdogSweep,
+  watchdogFailedExecutions,
+  postExecutionFailed,
   watchdogConfig,
   postWaitingAlert,
   hmacHex,

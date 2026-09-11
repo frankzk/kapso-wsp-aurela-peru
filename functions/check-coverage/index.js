@@ -736,8 +736,14 @@ const WATCHDOG_MAX_ALERTS = 6;
 const WATCHDOG_WORKFLOW_ID = "9c2ad1b6-c99c-432a-ba19-42882d07bd5d";
 const FAILED_EXEC_TTL_S = 24 * 60 * 60;
 const FAILED_EXEC_MAX_AGE_MS = 6 * 60 * 60 * 1000;
-const FAILED_EXEC_MAX_ALERTS = 5;
 const FAILED_EXEC_PAGES = 5;
+const FAILED_EXEC_MARK_MAX = 300;      // tope duro de caidas marcadas por barrido
+const FAILED_EXEC_LIST_MAX = 6;        // cuantas se nombran en el aviso normal
+const FAILED_EXEC_ERROR_PROBE = 8;     // cuantas se consultan para saber el motivo
+const FAILED_EXEC_POST_MAX = 25;       // tope de POSTs al dashboard por barrido
+const FAILED_EXEC_MASS_THRESHOLD = 8;  // a partir de aqui es caida masiva
+const FAILED_EXEC_MASS_GATE_MS = 30 * 60 * 1000;
+const BILLING_URL = "https://app.kapso.ai/projects/387343ab-aa79-4641-b56b-fe9cf93e274e/billing";
 const WATCHDOG_TRIVIAL_WORDS = new Set([
   "ok", "okey", "oki", "okis", "ya", "listo", "lista", "gracias", "muchas",
   "mil", "si", "no", "buenas", "buenos", "noches", "dias", "dia", "buen",
@@ -846,7 +852,12 @@ async function maybeRunWatchdog(env, { force = false } = {}) {
 }
 
 // Barre las ejecuciones del sales bot en estado "failed" y avisa por cada una
-// que no se haya avisado antes. Best-effort de punta a punta.
+// que no se haya avisado antes. Dos cosas importan y la primera version las
+// erraba: (1) el motivo real —quedarse sin creditos de IA tumba TODAS las
+// respuestas del agente y no tiene nada que ver con un envio rechazado por
+// Meta— y (2) la escala: el 9-sep cayeron 99 ejecuciones en 1h40 y un aviso
+// con tope de 5 nombres no transmitia que la tienda estaba muda. Best-effort
+// de punta a punta.
 async function watchdogFailedExecutions(cfg, env, now) {
   if (!env?.KV) return { ran: false, reason: "no_kv" };
   // Ojo: las ejecuciones fallidas quedan mezcladas entre cientos de ejecuciones
@@ -869,6 +880,8 @@ async function watchdogFailedExecutions(cfg, env, now) {
     if (!cursor || !data.length) break;
   }
 
+  // Se marcan TODAS las caidas nuevas en KV (no solo las que se listan), si no
+  // el conteo miente y el barrido siguiente vuelve a avisar por las mismas.
   const fresh = [];
   for (const e of rows) {
     if (e?.status !== "failed") continue;
@@ -883,12 +896,37 @@ async function watchdogFailedExecutions(cfg, env, now) {
       convId: e.whatsapp_conversation_id || "",
       endedAt: e.ended_at || "",
     });
-    if (fresh.length >= FAILED_EXEC_MAX_ALERTS) break;
+    if (fresh.length >= FAILED_EXEC_MARK_MAX) break;
   }
-  if (!fresh.length) return { ran: true, alerted: 0 };
+  if (!fresh.length) return { ran: true, total: 0, alerted: 0 };
 
-  // Telefono/nombre del cliente (sin el, el aviso no sirve para atenderlo).
-  for (const f of fresh) {
+  // Motivo real: se lee el evento execution_failed de una muestra (no de las
+  // 99, seria una llamada por ejecucion) y se clasifica.
+  const causes = {};
+  const probe = fresh.slice(0, FAILED_EXEC_ERROR_PROBE);
+  for (const f of probe) {
+    let msg = "";
+    try {
+      const res = await fetch(`${cfg.kapsoApiBase}/platform/v1/workflow_executions/${f.id}/events`, { headers: { "X-API-Key": cfg.kapsoApiKey } });
+      if (res.ok) {
+        const body = await res.json();
+        const arr = Array.isArray(body) ? body : (body?.data || []);
+        for (const ev of arr) {
+          const t = ev.event_type || ev.type;
+          if (t === "execution_failed" || t === "step_failed") { msg = String((ev.payload || ev.data || {}).error || ""); break; }
+        }
+      }
+    } catch {}
+    f.cause = classifyExecError(msg);
+    causes[f.cause.key] = (causes[f.cause.key] || 0) + 1;
+  }
+  const dominant = Object.keys(causes).sort((a, b) => causes[b] - causes[a])[0] || "desconocido";
+  const critical = probe.some((f) => f.cause && f.cause.critical && f.cause.key === dominant);
+  const label = (probe.find((f) => f.cause && f.cause.key === dominant) || {}).cause?.label || "motivo no identificado";
+
+  // Telefono/nombre solo de las que se van a nombrar (una llamada por cliente).
+  const listed = fresh.slice(0, FAILED_EXEC_LIST_MAX);
+  for (const f of listed) {
     if (!f.convId) continue;
     try {
       const res = await fetch(`${cfg.kapsoApiBase}/platform/v1/whatsapp/conversations/${f.convId}`, { headers: { "X-API-Key": cfg.kapsoApiKey } });
@@ -900,13 +938,34 @@ async function watchdogFailedExecutions(cfg, env, now) {
     } catch {}
   }
 
-  for (const f of fresh) await postExecutionFailed(cfg, f);
+  for (const f of fresh.slice(0, FAILED_EXEC_POST_MAX)) await postExecutionFailed(cfg, f, dominant, fresh.length);
 
-  const lines = fresh.map((f) => {
-    const who = f.phone ? `*${f.name || f.phone}* (+${f.phone})` : `conversacion \`${f.convId || "?"}\``;
-    return `• ${who}\n  paso \`${f.step}\` — el seguimiento se corto aqui`;
-  });
-  const text = `🛑 *Seguimiento cortado por un fallo de envio*\n\n${lines.join("\n")}\n\nEstos leads NO van a recibir los toques que faltaban. Escribiles a mano desde Kapso.`;
+  // Caida masiva: un aviso agregado, con el total y que hacer. Se limita a uno
+  // cada media hora para no ametrallar el Telegram mientras dura la caida.
+  const masiva = fresh.length >= FAILED_EXEC_MASS_THRESHOLD;
+  let text;
+  if (masiva) {
+    try {
+      if (await env.KV.get("watchdog:failedexec:mass")) return { ran: true, total: fresh.length, alerted: 0, cause: dominant, gated: true };
+      await env.KV.put("watchdog:failedexec:mass", "1", { expirationTtl: Math.floor(FAILED_EXEC_MASS_GATE_MS / 1000) });
+    } catch {}
+    const extra = dominant === "sin_creditos"
+      ? `\n\n👉 *RECARGA AQUI:* ${BILLING_URL}\nMientras tanto el bot NO responde a nadie: solo salen los recordatorios automaticos, que no gastan IA. Cada consulta nueva se pierde.`
+      : "\n\nEstos leads no van a recibir lo que faltaba. Revisalos en Kapso.";
+    const muestra = listed.filter((f) => f.phone).slice(0, FAILED_EXEC_LIST_MAX)
+      .map((f) => `• *${f.name || f.phone}* (+${f.phone})`).join("\n");
+    const quienes = muestra ? `\n\nAlgunos de los afectados:\n${muestra}${fresh.length > listed.length ? `\n…y ${fresh.length - listed.length} mas.` : ""}` : "";
+    text = `🚨 *CAIDA MASIVA — ${fresh.length} ejecuciones caidas*\n\nMotivo: *${label}*.${extra}${quienes}`;
+  } else {
+    const lines = listed.map((f) => {
+      const who = f.phone ? `*${f.name || f.phone}* (+${f.phone})` : `conversacion \`${f.convId || "?"}\``;
+      const why = f.cause ? f.cause.label : label;
+      return `• ${who}\n  paso \`${f.step}\` — ${why}`;
+    });
+    const resto = fresh.length > listed.length ? `\n\n…y ${fresh.length - listed.length} mas (total ${fresh.length}).` : "";
+    text = `🛑 *Seguimiento cortado* (${fresh.length})\n\n${lines.join("\n")}${resto}\n\nEstos leads no van a recibir los toques que faltaban. Escribiles a mano desde Kapso.`;
+  }
+
   const EXTRA_TELEGRAM_CHAT_IDS = ["8844863582"];
   const recipients = [...new Set([cfg.telegramChatId, ...EXTRA_TELEGRAM_CHAT_IDS].filter(Boolean).map((x) => String(x)))];
   for (const chatId of recipients) {
@@ -918,19 +977,45 @@ async function watchdogFailedExecutions(cfg, env, now) {
       });
     } catch {}
   }
-  return { ran: true, alerted: fresh.length };
+  return { ran: true, total: fresh.length, alerted: fresh.length, cause: dominant, masiva, critical };
 }
 
-// POST al dashboard por cada ejecucion caida, con la misma firma que el resto.
-async function postExecutionFailed(cfg, f) {
+// Traduce el error crudo de Kapso a algo accionable. Quedarse sin creditos es
+// la unica categoria critica: no corta un seguimiento, apaga el bot entero.
+function classifyExecError(msg) {
+  const m = String(msg || "").trim();
+  if (/insufficient credits/i.test(m)) return { key: "sin_creditos", label: "sin creditos de IA en Kapso", critical: true, reason: "insufficient_credits" };
+  if (/rate.?limit|too many requests|429/i.test(m)) return { key: "rate_limit", label: "limite de peticiones del proveedor", critical: false, reason: "rate_limited" };
+  if (/\b13\d{4}\b|not delivered|whatsapp|messag\w*\s+fail/i.test(m)) return { key: "envio", label: "Meta rechazo el envio", critical: false, reason: "followup_send_failed" };
+  if (/timeout|timed out/i.test(m)) return { key: "timeout", label: "timeout del agente", critical: false, reason: "agent_timeout" };
+  if (!m) return { key: "desconocido", label: "sin detalle en el evento", critical: false, reason: "execution_failed" };
+  return { key: "otro", label: m.slice(0, 90), critical: false, reason: "execution_failed" };
+}
+
+const EXEC_FAIL_REASONS = {
+  sin_creditos: "insufficient_credits",
+  rate_limit: "rate_limited",
+  envio: "followup_send_failed",
+  timeout: "agent_timeout",
+  desconocido: "execution_failed",
+  otro: "execution_failed",
+};
+
+// POST al dashboard por cada ejecucion caida. El `reason` lleva el motivo real
+// (antes iba siempre "followup_send_failed", que para una caida por creditos
+// mandaba al equipo a buscar el problema donde no estaba).
+async function postExecutionFailed(cfg, f, causeKey, total) {
   const url = cfg.storeWebhookUrl;
   if (!url) return;
+  const reason = EXEC_FAIL_REASONS[causeKey] || "execution_failed";
   const body = JSON.stringify({
     event: "workflow.execution.failed",
     phone_number: f.phone || "",
     conversation_id: f.convId || "",
-    reason: "followup_send_failed",
-    context_summary: `La ejecucion murio en el paso ${f.step}; el cliente no recibira los seguimientos restantes.`,
+    reason,
+    context_summary: `La ejecucion murio en el paso ${f.step}; el cliente no recibira respuesta ni los seguimientos restantes.`,
+    failed_step: f.step || "",
+    total_failed: total || 1,
   });
   const headers = { "Content-Type": "application/json" };
   if (cfg.storeWebhookSecret) {
@@ -1073,6 +1158,7 @@ globalThis.__aurelaCheckCoverage = {
   watchdogSweep,
   watchdogFailedExecutions,
   postExecutionFailed,
+  classifyExecError,
   watchdogConfig,
   postWaitingAlert,
   hmacHex,

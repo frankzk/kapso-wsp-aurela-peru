@@ -1,0 +1,366 @@
+{
+ "nodes": [
+  {
+   "id": "start",
+   "type": "flow-node",
+   "position": {
+    "x": 100,
+    "y": 300
+   },
+   "data": {
+    "node_type": "start",
+    "config": {},
+    "display_name": "Start"
+   }
+  },
+  {
+   "id": "router",
+   "type": "flow-node",
+   "position": {
+    "x": 400,
+    "y": 300
+   },
+   "data": {
+    "node_type": "decide",
+    "config": {
+     "decision_type": "function",
+     "conditions": [
+      {
+       "id": "62e5fb37-72e9-4dd4-be3f-c84aa6f30599",
+       "label": "boton",
+       "description": "El cliente pulso uno de los botones de cobro del aviso de Shalom. Lo contesta el dashboard: el workflow NO responde nada."
+      },
+      {
+       "id": "97bf3e76-06f4-468a-92c5-faf544674f0e",
+       "label": "trivial",
+       "description": "Cierre trivial: 'ok', 'gracias', 'listo' o solo emojis. No necesita respuesta: el sistema ya le repitio su saldo."
+      },
+      {
+       "id": "3c799d35-2261-4b09-b9bc-f0d670ab771d",
+       "label": "voucher",
+       "description": "Mando una imagen o un PDF: es un comprobante de pago. Avisar al equipo y agradecerle."
+      },
+      {
+       "id": "c4c0d2c6-2666-4b58-9218-2e29ae377efe",
+       "label": "texto",
+       "description": "Escribio texto libre: una consulta sobre su envio o su saldo. La atiende el agente."
+      }
+     ],
+     "llm_configuration": {},
+     "function_id": "7203c505-dfc5-475d-8602-efe70f4fda34",
+     "function_name": "shalom-router"
+    },
+    "display_name": "Decision: Function"
+   }
+  },
+  {
+   "id": "esperar-6h",
+   "type": "flow-node",
+   "position": {
+    "x": 750,
+    "y": 140
+   },
+   "data": {
+    "node_type": "wait_for_response",
+    "config": {
+     "has_timeout": true,
+     "timeout_seconds": 21600,
+     "save_response_to": null
+    },
+    "display_name": "Wait for Response (21600s timeout)"
+   }
+  },
+  {
+   "id": "compuerta",
+   "type": "flow-node",
+   "position": {
+    "x": 1100,
+    "y": 140
+   },
+   "data": {
+    "node_type": "decide",
+    "config": {
+     "decision_type": "function",
+     "conditions": [
+      {
+       "id": "e08844c9-52ac-41db-b8af-ec5151b37640",
+       "label": "voucher",
+       "description": "Mando el comprobante durante la espera: atenderlo, no recordarle el pago."
+      },
+      {
+       "id": "4892e4a8-a9e9-4620-bb37-323f494d487a",
+       "label": "texto",
+       "description": "Escribio durante la espera: la consulta la atiende el agente."
+      },
+      {
+       "id": "30df9e93-4e0b-4e04-86d8-5530525f4ce4",
+       "label": "recordar",
+       "description": "Sigue sin responder y la ventana de 24h sigue abierta: mandar el unico recordatorio."
+      },
+      {
+       "id": "d14de709-128e-49d5-8b87-3c5bb2620f5a",
+       "label": "fin",
+       "description": "Ya le respondieron, o la ventana de 24h se cerro: no mandar nada."
+      }
+     ],
+     "llm_configuration": {},
+     "function_id": "7203c505-dfc5-475d-8602-efe70f4fda34",
+     "function_name": "shalom-router"
+    },
+    "display_name": "Decision: Function"
+   }
+  },
+  {
+   "id": "recordatorio",
+   "type": "flow-node",
+   "position": {
+    "x": 1450,
+    "y": 140
+   },
+   "data": {
+    "node_type": "send_text",
+    "config": {
+     "whatsapp_config_id": null,
+     "phone_number_id": null,
+     "message": "Hola 👋 ¿Pudiste hacer el pago del saldo pendiente? Apenas lo recibamos, tu pedido queda listo para que lo recojas en la agencia 😊\n\nSi tienes alguna duda, escribeme por aqui y te ayudo.",
+     "delay_seconds": 0,
+     "provider_model_id": null,
+     "provider_model_name": null,
+     "ai_field_config": {},
+     "to_phone_number": null
+    },
+    "display_name": "Send Text Message"
+   }
+  },
+  {
+   "id": "avisar-pago",
+   "type": "flow-node",
+   "position": {
+    "x": 750,
+    "y": 340
+   },
+   "data": {
+    "node_type": "function",
+    "config": {
+     "function_id": "fc7a67ec-dc65-420f-8cf5-79a0be4b032b",
+     "function_name": "Notify Team",
+     "save_response_to": null
+    },
+    "display_name": "Function: Notify Team"
+   }
+  },
+  {
+   "id": "fin",
+   "type": "flow-node",
+   "position": {
+    "x": 1800,
+    "y": 340
+   },
+   "data": {
+    "node_type": "set_variable",
+    "config": {
+     "variable_name": "cobro_shalom_cerrado",
+     "variable_value": "t",
+     "value_type": "boolean"
+    },
+    "display_name": "Set Variable: cobro_shalom_cerrado"
+   }
+  },
+  {
+   "id": "agente",
+   "type": "flow-node",
+   "position": {
+    "x": 1100,
+    "y": 560
+   },
+   "data": {
+    "node_type": "agent",
+    "config": {
+     "ui_skills": [],
+     "system_prompt": "ROL\n\nAtiendes el número de cobros de Aurela. Este número NO vende. Se usa únicamente para\ncobrar el saldo pendiente de pedidos ya enviados por Shalom y para resolver\ndudas sobre ese cobro y sobre el recojo en agencia.\n\nQuien te escribe ya compró, ya pagó un adelanto y su paquete está en camino\no esperándola en una agencia. No es un lead.\n\nCÓMO RESPONDES (contrato de herramientas)\n\n- Para escribirle al cliente usa SIEMPRE send_text. Es el único canal: tu\n  texto suelto no se entrega. Un solo send_text por turno.\n- El cliente JAMÁS debe leer tu razonamiento, tu plan ni nombres de\n  herramientas. Nada de \"procedo con\", \"voy a llamar\", \"según las\n  instrucciones\".\n- Cuando termines de responder, llama complete_task. Si no hay nada que\n  responder, llama complete_task sin enviar nada.\n- Para derivar: notify_team con una etiqueta corta en `reason` y el motivo\n  en una línea en `note`. Las etiquetas son `cobro_shalom_devolucion`,\n  `cobro_shalom_reclamo`, `cobro_shalom_ya_pago`, `cobro_shalom_pide_humano`\n  y `cobro_shalom_otro`. `reason` NUNCA va vacío: sin él, el aviso interno\n  sale titulado «Voucher recibido» y el equipo busca un comprobante que no\n  existe. Después handoff_to_human, y recién ahí un send_text corto avisando\n  que una asesora continúa.\n\nLO QUE NUNCA HACES\n\n1. NUNCA respondas a un mensaje de BOTÓN. Los botones «Pagar con Yape»,\n   «Transferencia Depósito» y «Link de pago» los contesta el sistema\n   automáticamente con los datos correctos. Si el mensaje entrante es de tipo\n   button o interactive, no envíes nada. Guarda silencio.\n\n2. NUNCA escribas un número de cuenta, de Yape, de Plin o de banco. No los\n   tienes y no los adivines: los manda el sistema. Si te los piden, contesta\n   que se los envías y nada más.\n\n3. NUNCA des la clave de recojo, ni digas cuál es, ni prometas cuándo llega.\n   Se entrega desde el sistema cuando el pago está validado.\n\n4. NUNCA vendas. No ofrezcas productos, no sugieras otro pedido, no hagas\n   upsell aunque la conversación lo invite.\n\n5. NUNCA inventes montos, fechas de llegada ni números de guía. Si no lo\n   tienes en el contexto de la conversación, no lo digas.\n\nLO QUE SÍ HACES\n\n- «ok», «gracias», «listo», un emoji: NO contestes. El sistema ya le repite\n  su saldo y el Yape.\n\n- «ya pagué» / manda una captura: agradece y dile que el pago pasa a\n  revisión y que le confirmamos apenas quede validado. Lo valida una persona;\n  tú NO sabes si el pago está bien, ni por cuánto, ni de quién. Nunca digas ni\n  insinúes que ya está validado, ni que ya puede ir a recoger: si va a la\n  agencia sin la clave liberada, hace el viaje en vano. No prometas un tiempo\n  exacto.\n\n- «¿dónde lo recojo?»: la agencia está en el mensaje que ya recibió. Si la\n  tienes en el contexto, repítela; si no, dile que revise el mensaje con su\n  guía y su código.\n\n- «¿puedo pagar al recoger?»: no. El saldo se paga antes, y así al llegar a\n  la agencia solo retira sin esperar.\n\n- «¿cuándo llega?»: entre 2 y 5 días hábiles desde que salió. Nada más\n  preciso.\n\nCUÁNDO PASAS A UNA ASESORA (handoff)\n\n- Quiere devolver, cancelar o no quiere el pedido. Un «no» o un «no gracias»\n  seco, después de pedirle el saldo, es esto: no es un cierre de conversación.\n- Reclama por el producto: dañado, equivocado, incompleto.\n- Dice que ya pagó el total y aun así le pedimos saldo.\n- Pide hablar con una persona.\n- Cualquier cosa que no esté en la lista de arriba.\n\nAl derivar, escribe el motivo en una línea. No le digas «te paso con una\nasesora» para cosas que sí sabes contestar: eso es lo que hay que evitar.\n\nTONO\n\nBreve. Dos o tres líneas. Peruano neutro, cordial, sin exclamaciones de más\ny sin emojis salvo uno ocasional. Nunca repitas el mensaje completo del\naviso.",
+     "provider_model_id": "a88e0501-2f81-4e01-831f-0fed220cc0bc",
+     "provider_model_name": "google/gemini-3.7-flash",
+     "temperature": "0.2",
+     "max_iterations": 8,
+     "max_tokens": 1024,
+     "reasoning_effort": null,
+     "prompt_cache_ttl": "5m",
+     "observer_prompt_mode": "analysis_only",
+     "message_delivery_mode": "tool_only",
+     "enabled_default_tools": [
+      "get_whatsapp_context",
+      "get_current_datetime",
+      "complete_task",
+      "handoff_to_human",
+      "send_notification_to_user",
+      "enter_waiting"
+     ],
+     "default_tool_configs": {},
+     "sandbox_enabled": false,
+     "sandbox_network_mode": "allow_all",
+     "sandbox_allowed_outbound_hosts": [],
+     "flow_agent_function_tools": [
+      {
+       "name": "send_text",
+       "description": "Envia un mensaje de texto al cliente por WhatsApp. UNICO canal para escribirle: tu texto suelto no se entrega. Un solo envio por turno.",
+       "function_id": "5fb54b2b-bbdc-47a4-af9a-ea3c57f82add",
+       "function_name": "send-text",
+       "input_schema": {
+        "type": "object",
+        "required": [
+         "text"
+        ],
+        "properties": {
+         "text": {
+          "type": "string",
+          "description": "El mensaje para el cliente, breve (2-3 lineas)."
+         }
+        }
+       }
+      },
+      {
+       "name": "notify_team",
+       "description": "Alerta interna al equipo (Telegram + cola del dashboard). El cliente NUNCA la ve. Usala al derivar: etiqueta corta en `reason` y el motivo en `note`. Sin `reason` el aviso sale titulado como voucher recibido y confunde al equipo.",
+       "function_id": "fc7a67ec-dc65-420f-8cf5-79a0be4b032b",
+       "function_name": "Notify Team",
+       "input_schema": {
+        "type": "object",
+        "properties": {
+         "note": {
+          "type": "string",
+          "description": "Motivo de la derivacion, en una linea."
+         },
+         "phone": {
+          "type": "string"
+         },
+         "reason": {
+          "type": "string",
+          "description": "OBLIGATORIO al derivar. Etiqueta corta: cobro_shalom_devolucion, cobro_shalom_reclamo, cobro_shalom_ya_pago, cobro_shalom_pide_humano o cobro_shalom_otro."
+         },
+         "customerName": {
+          "type": "string"
+         },
+         "conversationId": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     ],
+     "flow_agent_app_integration_tools": [],
+     "flow_agent_webhooks": [],
+     "flow_agent_knowledge_bases": [],
+     "flow_agent_mcp_servers": [],
+     "flow_agent_resources": []
+    },
+    "display_name": "AI Agent"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "9c4690a1-47a2-452a-a8e7-b13077428d6f",
+   "source": "start",
+   "target": "router",
+   "label": "next",
+   "type": "default",
+   "flow_condition_id": null
+  },
+  {
+   "id": "512bf535-a473-448d-8c89-3cd5594d20c2",
+   "source": "router",
+   "target": "fin",
+   "label": "trivial",
+   "type": "default",
+   "flow_condition_id": "97bf3e76-06f4-468a-92c5-faf544674f0e"
+  },
+  {
+   "id": "bd37b293-4b7c-4b05-a839-599d38f9e139",
+   "source": "router",
+   "target": "agente",
+   "label": "texto",
+   "type": "default",
+   "flow_condition_id": "c4c0d2c6-2666-4b58-9218-2e29ae377efe"
+  },
+  {
+   "id": "5cc5ad0a-cda2-4ba8-ae7a-20f85bb61962",
+   "source": "router",
+   "target": "esperar-6h",
+   "label": "boton",
+   "type": "default",
+   "flow_condition_id": "62e5fb37-72e9-4dd4-be3f-c84aa6f30599"
+  },
+  {
+   "id": "c39a43db-8e8f-42fb-8e07-2e6c54b4c5c8",
+   "source": "router",
+   "target": "avisar-pago",
+   "label": "voucher",
+   "type": "default",
+   "flow_condition_id": "3c799d35-2261-4b09-b9bc-f0d670ab771d"
+  },
+  {
+   "id": "741dec15-fca2-4b87-afe6-227fe6152c1c",
+   "source": "esperar-6h",
+   "target": "compuerta",
+   "label": "next",
+   "type": "default",
+   "flow_condition_id": null
+  },
+  {
+   "id": "236ade8c-8f7b-48f4-9ea7-7d64abcd5fb9",
+   "source": "compuerta",
+   "target": "agente",
+   "label": "texto",
+   "type": "default",
+   "flow_condition_id": "4892e4a8-a9e9-4620-bb37-323f494d487a"
+  },
+  {
+   "id": "0db56ca2-df31-497c-9069-21e04b8228c3",
+   "source": "compuerta",
+   "target": "avisar-pago",
+   "label": "voucher",
+   "type": "default",
+   "flow_condition_id": "e08844c9-52ac-41db-b8af-ec5151b37640"
+  },
+  {
+   "id": "6060b721-ae64-4ada-a7f6-1f7a4714c200",
+   "source": "compuerta",
+   "target": "recordatorio",
+   "label": "recordar",
+   "type": "default",
+   "flow_condition_id": "30df9e93-4e0b-4e04-86d8-5530525f4ce4"
+  },
+  {
+   "id": "5edc1f7b-e87d-46c1-ac4a-ea637fd27ac5",
+   "source": "compuerta",
+   "target": "fin",
+   "label": "fin",
+   "type": "default",
+   "flow_condition_id": "d14de709-128e-49d5-8b87-3c5bb2620f5a"
+  },
+  {
+   "id": "c47e4da2-c15c-49f9-994a-9a02d72ab6c7",
+   "source": "recordatorio",
+   "target": "fin",
+   "label": "next",
+   "type": "default",
+   "flow_condition_id": null
+  },
+  {
+   "id": "dd7bb1d4-05e9-4614-9a51-ba465230b179",
+   "source": "avisar-pago",
+   "target": "agente",
+   "label": "next",
+   "type": "default",
+   "flow_condition_id": null
+  },
+  {
+   "id": "9c8cb8fc-4da0-413e-81c0-cace70832f22",
+   "source": "agente",
+   "target": "fin",
+   "label": "next",
+   "type": "default",
+   "flow_condition_id": null
+  }
+ ]
+}

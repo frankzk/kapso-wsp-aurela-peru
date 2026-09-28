@@ -11,7 +11,7 @@ const SCRIPTS = {
 Para separarlo, realiza el adelanto de S/30 al Yape:
 ${YAPE_NAME}
 ${YAPE_NUMBER}
-El saldo lo pagas al recoger.
+El saldo lo pagas cuando despachemos: te llega tu guía por WhatsApp con el monto, y en la agencia solo recoges.
 También necesito el DNI del titular que recogerá.
 Envíame el voucher o captura para pasarlo a validación logística ✅`,
   olva:

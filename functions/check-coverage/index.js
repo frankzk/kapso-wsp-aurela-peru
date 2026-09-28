@@ -725,7 +725,10 @@ const WATCHDOG_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 const WATCHDOG_MIN_SILENCE_MS = 3 * 60 * 1000;
 const WATCHDOG_MAX_SILENCE_MS = 6 * 60 * 60 * 1000;
 const WATCHDOG_ALERT_TTL_S = 6 * 60 * 60;
-const WATCHDOG_PHONE_IDS = ["1241790819006805", "1022274334303691"];
+// 1398153106708478 = +51 929 332 058, linea de cobros Shalom (workflow "Aurela Cobros
+// Shalom"). Ahi el bot calla a proposito ante botones y acuses: los contesta el
+// dashboard. Si el dashboard no contesta un boton, este watchdog es quien lo ve.
+const WATCHDOG_PHONE_IDS = ["1241790819006805", "1022274334303691", "1398153106708478"];
 const WATCHDOG_MAX_ALERTS = 6;
 // Guard de ejecuciones caidas: si un paso de la escalera de seguimiento falla
 // (tipico: Meta rechaza el envio, error 131049 "healthy ecosystem engagement"),

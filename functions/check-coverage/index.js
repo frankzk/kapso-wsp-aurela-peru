@@ -736,7 +736,13 @@ const WATCHDOG_MAX_ALERTS = 6;
 // silencio. No hay rama de error en el workflow, asi que el guard no repara la
 // ejecucion: la detecta y la levanta al equipo (Telegram + dashboard) para que
 // cierren a mano. Se dedupe por ejecucion en KV.
-const WATCHDOG_WORKFLOW_ID = "9c2ad1b6-c99c-432a-ba19-42882d07bd5d";
+// Workflows que barre, con el nombre de la linea para el aviso. Cobros va
+// primero a proposito: sus caidas son pocas y son clientas que ya compraron, asi
+// que no pueden quedar tapadas por una tanda de caidas de ventas en la lista.
+const FAILED_EXEC_WORKFLOWS = [
+  { id: "784bb035-5d11-46ba-878f-dbf8de33fdb5", linea: "cobros" },
+  { id: "9c2ad1b6-c99c-432a-ba19-42882d07bd5d", linea: "ventas" },
+];
 const FAILED_EXEC_TTL_S = 24 * 60 * 60;
 const FAILED_EXEC_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const FAILED_EXEC_PAGES = 5;
@@ -854,7 +860,8 @@ async function maybeRunWatchdog(env, { force = false } = {}) {
   return { ...swept, failedExecs };
 }
 
-// Barre las ejecuciones del sales bot en estado "failed" y avisa por cada una
+// Barre las ejecuciones en estado "failed" de cada workflow de
+// FAILED_EXEC_WORKFLOWS y avisa por cada una
 // que no se haya avisado antes. Dos cosas importan y la primera version las
 // erraba: (1) el motivo real —quedarse sin creditos de IA tumba TODAS las
 // respuestas del agente y no tiene nada que ver con un envio rechazado por
@@ -866,27 +873,36 @@ async function watchdogFailedExecutions(cfg, env, now) {
   // Ojo: las ejecuciones fallidas quedan mezcladas entre cientos de ejecuciones
   // vivas (waiting), asi que una sola pagina de 100 no alcanza — la caida del
   // 9-sep aparecia en la posicion 134. Se recorren varias paginas.
+  // Un workflow que no responde no tumba el barrido de los otros.
   const rows = [];
-  let cursor = null;
-  for (let page = 0; page < FAILED_EXEC_PAGES; page += 1) {
-    let url = `${cfg.kapsoApiBase}/platform/v1/workflows/${WATCHDOG_WORKFLOW_ID}/executions?limit=100`;
-    if (cursor) url += `&after=${encodeURIComponent(cursor)}`;
-    let payload;
-    try {
-      const res = await fetch(url, { headers: { "X-API-Key": cfg.kapsoApiKey } });
-      if (!res.ok) { if (!rows.length) return { ran: false, reason: "http_" + res.status }; break; }
-      payload = await res.json();
-    } catch { if (!rows.length) return { ran: false, reason: "request_failed" }; break; }
-    const data = payload?.data || [];
-    rows.push(...data);
-    cursor = payload?.paging?.cursors?.after || null;
-    if (!cursor || !data.length) break;
+  const errores = {};
+  for (const wf of FAILED_EXEC_WORKFLOWS) {
+    let cursor = null;
+    let leidas = 0;
+    for (let page = 0; page < FAILED_EXEC_PAGES; page += 1) {
+      let url = `${cfg.kapsoApiBase}/platform/v1/workflows/${wf.id}/executions?limit=100`;
+      if (cursor) url += `&after=${encodeURIComponent(cursor)}`;
+      let payload;
+      try {
+        const res = await fetch(url, { headers: { "X-API-Key": cfg.kapsoApiKey } });
+        if (!res.ok) { if (!leidas) errores[wf.linea] = "http_" + res.status; break; }
+        payload = await res.json();
+      } catch { if (!leidas) errores[wf.linea] = "request_failed"; break; }
+      const data = payload?.data || [];
+      leidas += data.length;
+      for (const e of data) rows.push({ e, linea: wf.linea });
+      cursor = payload?.paging?.cursors?.after || null;
+      if (!cursor || !data.length) break;
+    }
+  }
+  if (Object.keys(errores).length === FAILED_EXEC_WORKFLOWS.length) {
+    return { ran: false, reason: "sin_datos", errores };
   }
 
   // Se marcan TODAS las caidas nuevas en KV (no solo las que se listan), si no
   // el conteo miente y el barrido siguiente vuelve a avisar por las mismas.
   const fresh = [];
-  for (const e of rows) {
+  for (const { e, linea } of rows) {
     if (e?.status !== "failed") continue;
     const endedAt = Date.parse(e.ended_at || e.last_event_at || "");
     if (Number.isFinite(endedAt) && now - endedAt > FAILED_EXEC_MAX_AGE_MS) continue;
@@ -895,13 +911,18 @@ async function watchdogFailedExecutions(cfg, env, now) {
     try { await env.KV.put(key, "1", { expirationTtl: FAILED_EXEC_TTL_S }); } catch {}
     fresh.push({
       id: e.id,
+      linea,
       step: (e.current_step || {}).identifier || "?",
       convId: e.whatsapp_conversation_id || "",
       endedAt: e.ended_at || "",
     });
     if (fresh.length >= FAILED_EXEC_MARK_MAX) break;
   }
-  if (!fresh.length) return { ran: true, total: 0, alerted: 0 };
+  if (!fresh.length) return { ran: true, total: 0, alerted: 0, ...(Object.keys(errores).length ? { errores } : {}) };
+  const porLinea = {};
+  for (const f of fresh) porLinea[f.linea] = (porLinea[f.linea] || 0) + 1;
+  const lineas = Object.keys(porLinea);
+  const desglose = lineas.length > 1 ? ` (${lineas.map((l) => `${l} ${porLinea[l]}`).join(" · ")})` : ` de ${lineas[0]}`;
 
   // Motivo real: se lee el evento execution_failed de una muestra (no de las
   // 99, seria una llamada por ejecucion) y se clasifica.
@@ -941,7 +962,9 @@ async function watchdogFailedExecutions(cfg, env, now) {
     } catch {}
   }
 
-  for (const f of fresh.slice(0, FAILED_EXEC_POST_MAX)) await postExecutionFailed(cfg, f, dominant, fresh.length);
+  // Cada caida con SU motivo si se consulto (las primeras FAILED_EXEC_ERROR_PROBE,
+  // cobros incluido porque va primero); si no, el dominante del barrido.
+  for (const f of fresh.slice(0, FAILED_EXEC_POST_MAX)) await postExecutionFailed(cfg, f, (f.cause && f.cause.key) || dominant, fresh.length);
 
   // Caida masiva: un aviso agregado, con el total y que hacer. Se limita a uno
   // cada media hora para no ametrallar el Telegram mientras dura la caida.
@@ -949,24 +972,27 @@ async function watchdogFailedExecutions(cfg, env, now) {
   let text;
   if (masiva) {
     try {
-      if (await env.KV.get("watchdog:failedexec:mass")) return { ran: true, total: fresh.length, alerted: 0, cause: dominant, gated: true };
+      if (await env.KV.get("watchdog:failedexec:mass")) return { ran: true, total: fresh.length, alerted: 0, cause: dominant, gated: true, porLinea };
       await env.KV.put("watchdog:failedexec:mass", "1", { expirationTtl: Math.floor(FAILED_EXEC_MASS_GATE_MS / 1000) });
     } catch {}
     const extra = dominant === "sin_creditos"
       ? `\n\n👉 *RECARGA AQUI:* ${BILLING_URL}\nMientras tanto el bot NO responde a nadie: solo salen los recordatorios automaticos, que no gastan IA. Cada consulta nueva se pierde.`
-      : "\n\nEstos leads no van a recibir lo que faltaba. Revisalos en Kapso.";
+      : "\n\nEsas conversaciones se cortaron y no van a recibir lo que faltaba. Revisalas en Kapso.";
     const muestra = listed.filter((f) => f.phone).slice(0, FAILED_EXEC_LIST_MAX)
-      .map((f) => `• *${f.name || f.phone}* (+${f.phone})`).join("\n");
+      .map((f) => `• *${f.name || f.phone}* (+${f.phone}) — ${f.linea}`).join("\n");
     const quienes = muestra ? `\n\nAlgunos de los afectados:\n${muestra}${fresh.length > listed.length ? `\n…y ${fresh.length - listed.length} mas.` : ""}` : "";
-    text = `🚨 *CAIDA MASIVA — ${fresh.length} ejecuciones caidas*\n\nMotivo: *${label}*.${extra}${quienes}`;
+    text = `🚨 *CAIDA MASIVA — ${fresh.length} ejecuciones caidas*${desglose}\n\nMotivo: *${label}*.${extra}${quienes}`;
   } else {
     const lines = listed.map((f) => {
       const who = f.phone ? `*${f.name || f.phone}* (+${f.phone})` : `conversacion \`${f.convId || "?"}\``;
       const why = f.cause ? f.cause.label : label;
-      return `• ${who}\n  paso \`${f.step}\` — ${why}`;
+      return `• ${who} — *${f.linea}*\n  paso \`${f.step}\` — ${why}`;
     });
     const resto = fresh.length > listed.length ? `\n\n…y ${fresh.length - listed.length} mas (total ${fresh.length}).` : "";
-    text = `🛑 *Seguimiento cortado* (${fresh.length})\n\n${lines.join("\n")}${resto}\n\nEstos leads no van a recibir los toques que faltaban. Escribiles a mano desde Kapso.`;
+    const que = [];
+    if (porLinea.cobros) que.push("Cobros: clientas que ya compraron y se quedaron sin respuesta sobre su saldo.");
+    if (porLinea.ventas) que.push("Ventas: esos leads no van a recibir los toques que faltaban.");
+    text = `🛑 *Ejecuciones caidas* (${fresh.length})${desglose}\n\n${lines.join("\n")}${resto}\n\n${que.join("\n")}\nEscribiles a mano desde Kapso.`;
   }
 
   const EXTRA_TELEGRAM_CHAT_IDS = ["8844863582"];
@@ -980,7 +1006,7 @@ async function watchdogFailedExecutions(cfg, env, now) {
       });
     } catch {}
   }
-  return { ran: true, total: fresh.length, alerted: fresh.length, cause: dominant, masiva, critical };
+  return { ran: true, total: fresh.length, alerted: fresh.length, cause: dominant, masiva, critical, porLinea, ...(Object.keys(errores).length ? { errores } : {}) };
 }
 
 // Traduce el error crudo de Kapso a algo accionable. Quedarse sin creditos es
@@ -1016,7 +1042,10 @@ async function postExecutionFailed(cfg, f, causeKey, total) {
     phone_number: f.phone || "",
     conversation_id: f.convId || "",
     reason,
-    context_summary: `La ejecucion murio en el paso ${f.step}; el cliente no recibira respuesta ni los seguimientos restantes.`,
+    context_summary: f.linea === "cobros"
+      ? `La ejecucion de cobros murio en el paso ${f.step}; la clienta no recibira respuesta sobre su saldo.`
+      : `La ejecucion murio en el paso ${f.step}; el cliente no recibira respuesta ni los seguimientos restantes.`,
+    workflow_line: f.linea || "",
     failed_step: f.step || "",
     total_failed: total || 1,
   });

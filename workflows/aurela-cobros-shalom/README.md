@@ -54,12 +54,18 @@ alinearon con esto el mismo día (antes prometían "el saldo lo pagas al recoger
 
 Olva no pasa por esta línea: en Aurela Olva es pago total anticipado.
 
+## Vigilancia
+
+- **Watchdog de clientes esperando** (`check-coverage`, `WATCHDOG_PHONE_IDS`):
+  incluye el 929. Si el dashboard no contesta un botón, avisa a los 3 min.
+- **Guard de ejecuciones caídas** (`check-coverage`, `FAILED_EXEC_WORKFLOWS`):
+  barre este workflow y el de ventas. Las caídas de cobros van primero en el
+  aviso de Telegram, marcadas «cobros», y el POST al dashboard lleva
+  `workflow_line: "cobros"` con el motivo propio de cada caída.
+
 ## Pendientes conocidos
 
 - El nombre verificado del 929 en Meta es **«GTEC KONDOTTY»**. Para una línea que
   pide pagos por Yape conviene cambiarlo a Aurela.
-- El guard de ejecuciones caídas de `check-coverage` (`WATCHDOG_WORKFLOW_ID`)
-  mira solo el sales bot. Una caída de este workflow no avisa por esa vía; sí
-  la ve el watchdog de clientes esperando, que ya incluye el 929.
 - En Telegram, un voucher de esta línea y un adelanto del bot de ventas salen con
   el mismo título («Voucher recibido»).

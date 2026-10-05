@@ -41,11 +41,16 @@ async function hmacHex(secret, body) {
 async function postStoreHandoff(config, ctx, payload) {
   const url = config.storeWebhookUrl;
   if (!url) return;
+
+  // El flujo de voucher no manda `reason`: no es un handoff, no va al dashboard.
+  const reason = String(payload.reason || "").trim();
+  if (!reason) return;
+
   const body = JSON.stringify({
     event: "workflow.execution.handoff",
     phone_number: ctx.phone || "",
     conversation_id: ctx.convId || "",
-    reason: String(payload.reason || "").trim(),
+    reason,
     context_summary: String(payload.note || payload.context_summary || "").replace(/\s+/g, " ").trim(),
   });
   const headers = { "Content-Type": "application/json" };
@@ -120,6 +125,9 @@ function headerFor(reason) {
   const r = String(reason || "").trim().toLowerCase();
   if (r.includes("reclamo") || r.includes("queja")) return "🔴 <b>RECLAMO — atender URGENTE</b>";
   if (r.includes("mayorista")) return "📦 <b>Pedido mayorista — coordinar</b>";
+  // El bot no puede editar un pedido ya creado: un horario o cambio de dia de
+  // entrega llega por aca para que reparto lo coordine.
+  if (r.includes("entrega")) return "🚚 <b>Cambio de entrega — coordinar con reparto</b>";
   if (r) return `🔔 <b>${escapeHtml(String(reason).trim())}</b>`;
   // Sin reason: comportamiento previo (flujo de voucher Shalom/Olva).
   return "🟢 <b>Voucher recibido — validar y enviar</b>";

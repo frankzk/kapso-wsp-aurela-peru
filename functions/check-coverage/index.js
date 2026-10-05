@@ -298,6 +298,7 @@ async function handleRequest(request, env = globalThis) {
       couriers: [],
       normalized: { district, province, region },
       sameDayUrgent: isLimaMetro ? sameDayUrgentInfo() : null,
+      calendarioReparto: isLimaMetro ? deliveryCalendar() : null,
       message: "Zona con pago contraentrega. Puede pagar al recibir en efectivo o Yape.",
     });
   }
@@ -313,15 +314,15 @@ async function handleRequest(request, env = globalThis) {
       paymentRecipient: "Grupo GF SAC",
       yapePhone: "930 555 309",
       requiresFullPrepayment: false,
-      balancePayment: "pickup",
+      balancePayment: "before_pickup",
       requiresShalomAgency: true,
       shalomAgency: shalomAgency || "",
       requiresVoucherBeforeConfirmation: true,
       shouldCreateOrder: false,
       normalized: { district, province, region },
       message: shalomAgency
-        ? `Listo, lo enviamos a la agencia Shalom: ${shalomAgency}.\nPara separar tu pedido solo se hace un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger).\nYape: Grupo GF SAC (razón social de Aurela)\n📱 930 555 309\nTambién necesito el DNI del titular que recogerá.\nApenas me envíes el voucher, te confirmo el despacho con tu código de seguimiento Shalom ✅`
-        : "Perfecto 🙌\nSí podemos enviarlo por Shalom. Para dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅"
+        ? `Listo, lo enviamos a la agencia Shalom: ${shalomAgency}.\nPara separar tu pedido solo se hace un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas antes de recoger, cuando te llegue tu guía).\nYape: Grupo GF SAC (razón social de Aurela)\n📱 930 555 309\nTambién necesito el DNI del titular que recogerá.\nApenas me envíes el voucher, te confirmo el despacho con tu código de seguimiento Shalom ✅`
+        : "Perfecto 🙌\nSí podemos enviarlo por Shalom. Para dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas antes de recoger, cuando te llegue tu guía) y con el voucher te confirmo el despacho ✅"
     });
   }
 
@@ -359,7 +360,7 @@ async function handleRequest(request, env = globalThis) {
     requiresShalomAgency: true,
     nextAction: "ask_shalom_agency",
     normalized: { district, province, region },
-    message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas al recoger) y con el voucher te confirmo el despacho ✅"
+    message: "Sí, podemos enviarlo por Shalom 🙌\nPara dejarlo encaminado, dime a qué agencia/oficina de Shalom deseas que llegue.\nSolo se separa con un adelanto de S/30 que *va a cuenta del total* (el saldo lo pagas antes de recoger, cuando te llegue tu guía) y con el voucher te confirmo el despacho ✅"
   });
 }
 
@@ -503,11 +504,65 @@ async function readJson(request) {
   try { return JSON.parse(text); } catch { return { message: text }; }
 }
 
-function sameDayUrgentInfo() {
-  const limaHour = (new Date().getUTCHours() + 24 - 5) % 24;
+// Ventana de entrega urgente HOY. Los domingos no hay reparto: antes respondia
+// "antes_10" un domingo a las 9am y el bot confirmaba entrega para ese dia.
+function sameDayUrgentInfo(now = new Date()) {
+  const lima = limaDay(now);
+  const limaHour = lima.getUTCHours();
+  if (!hayReparto(lima)) {
+    return { limaHour, window: "cerrado", canDeliverToday: false, deliveryWindowText: null, alertTeam: false, motivo: "domingo_sin_reparto" };
+  }
   if (limaHour < 10) return { limaHour, window: "antes_10", canDeliverToday: true, deliveryWindowText: "hoy", alertTeam: false };
   if (limaHour < 12) return { limaHour, window: "ventana_10_12", canDeliverToday: true, deliveryWindowText: "hoy entre las 3pm y 8pm", alertTeam: true };
   return { limaHour, window: "cerrado", canDeliverToday: false, deliveryWindowText: null, alertTeam: false };
+}
+
+// Calendario de reparto (Lima Metropolitana, contraentrega). El modelo NO sabe
+// que dia es: el prompt no trae la fecha y una sesion puede seguir al dia
+// siguiente con el contexto del anterior. El 3-oct, un sabado, le prometio a
+// una clienta entrega "mañana" y el domingo le dijo "programado para hoy". Asi
+// que el dia lo calcula esto, en hora de Peru, y el bot solo repite `texto`.
+// Domingos no hay reparto. Feriados: no se contemplan.
+const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const REPARTO_HORARIO = "entre 10am y 6pm";
+
+// Fecha "de pared" de Lima guardada en un Date: leer SOLO con getUTC*.
+function limaDay(now) {
+  return new Date(now.getTime() - 5 * 60 * 60 * 1000);
+}
+
+function sumarDias(d, n) {
+  return new Date(d.getTime() + n * 24 * 60 * 60 * 1000);
+}
+
+function hayReparto(d) {
+  return d.getUTCDay() !== 0;
+}
+
+function fechaTexto(d) {
+  return `${DIAS_SEMANA[d.getUTCDay()]} ${d.getUTCDate()} de ${MESES[d.getUTCMonth()]}`;
+}
+
+function deliveryCalendar(now = new Date()) {
+  const hoy = limaDay(now);
+  let siguiente = sumarDias(hoy, 1);
+  while (!hayReparto(siguiente)) siguiente = sumarDias(siguiente, 1);
+  const esManana = siguiente.getTime() - hoy.getTime() === 24 * 60 * 60 * 1000;
+  const hayRepartoHoy = hayReparto(hoy);
+  const cuando = esManana ? `mañana ${fechaTexto(siguiente)}` : `el ${fechaTexto(siguiente)}`;
+  const texto = hayRepartoHoy
+    ? `Un pedido confirmado hoy (${fechaTexto(hoy)}) llega ${cuando}, ${REPARTO_HORARIO}.${esManana ? "" : " Los domingos no hay reparto."}`
+    : `Hoy ${fechaTexto(hoy)} no hay reparto. El próximo reparto es ${cuando}, ${REPARTO_HORARIO}.`;
+  return {
+    hoy: fechaTexto(hoy),
+    horaLima: `${String(hoy.getUTCHours()).padStart(2, "0")}:${String(hoy.getUTCMinutes()).padStart(2, "0")}`,
+    hayRepartoHoy,
+    siguienteDiaDeReparto: fechaTexto(siguiente),
+    siguienteEsManana: esManana,
+    horario: REPARTO_HORARIO,
+    texto,
+  };
 }
 
 function hasCashOnDelivery({ region, province, district }) {
@@ -1185,6 +1240,8 @@ async function watchdogAdmin(payload, env) {
 }
 
 globalThis.__aurelaCheckCoverage = {
+  deliveryCalendar,
+  sameDayUrgentInfo,
   maybeRunWatchdog,
   maybeRunDailyDigest,
   watchdogSweep,

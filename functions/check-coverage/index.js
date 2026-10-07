@@ -504,13 +504,14 @@ async function readJson(request) {
   try { return JSON.parse(text); } catch { return { message: text }; }
 }
 
-// Ventana de entrega urgente HOY. Los domingos no hay reparto: antes respondia
-// "antes_10" un domingo a las 9am y el bot confirmaba entrega para ese dia.
+// Ventana de entrega urgente HOY. Los dias sin reparto (domingos, 25-dic, 1-ene)
+// devuelven "cerrado": antes respondia "antes_10" un domingo a las 9am y el bot
+// confirmaba entrega para ese dia.
 function sameDayUrgentInfo(now = new Date()) {
   const lima = limaDay(now);
   const limaHour = lima.getUTCHours();
   if (!hayReparto(lima)) {
-    return { limaHour, window: "cerrado", canDeliverToday: false, deliveryWindowText: null, alertTeam: false, motivo: "domingo_sin_reparto" };
+    return { limaHour, window: "cerrado", canDeliverToday: false, deliveryWindowText: null, alertTeam: false, motivo: motivoSinReparto(lima) === "domingo" ? "domingo_sin_reparto" : "feriado_sin_reparto" };
   }
   if (limaHour < 10) return { limaHour, window: "antes_10", canDeliverToday: true, deliveryWindowText: "hoy", alertTeam: false };
   if (limaHour < 12) return { limaHour, window: "ventana_10_12", canDeliverToday: true, deliveryWindowText: "hoy entre las 3pm y 8pm", alertTeam: true };
@@ -522,7 +523,8 @@ function sameDayUrgentInfo(now = new Date()) {
 // siguiente con el contexto del anterior. El 3-oct, un sabado, le prometio a
 // una clienta entrega "mañana" y el domingo le dijo "programado para hoy". Asi
 // que el dia lo calcula esto, en hora de Peru, y el bot solo repite `texto`.
-// Domingos no hay reparto. Feriados: no se contemplan.
+// No hay reparto los domingos, el 25 de diciembre ni el 1 de enero. El resto de
+// feriados SI se reparte (confirmado por el equipo, 7-oct-2026).
 const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const REPARTO_HORARIO = "entre 10am y 6pm";
@@ -536,8 +538,30 @@ function sumarDias(d, n) {
   return new Date(d.getTime() + n * 24 * 60 * 60 * 1000);
 }
 
+// Feriados sin reparto, como [mes (0-11), dia]. Cada año.
+const FERIADOS_SIN_REPARTO = [
+  { mes: 11, dia: 25, nombre: "Navidad" },
+  { mes: 0, dia: 1, nombre: "Año Nuevo" },
+];
+
+// null si ese dia hay reparto; si no, "domingo" o el nombre del feriado.
+function motivoSinReparto(d) {
+  const f = FERIADOS_SIN_REPARTO.find((x) => x.mes === d.getUTCMonth() && x.dia === d.getUTCDate());
+  if (f) return f.nombre;
+  if (d.getUTCDay() === 0) return "domingo";
+  return null;
+}
+
 function hayReparto(d) {
-  return d.getUTCDay() !== 0;
+  return !motivoSinReparto(d);
+}
+
+// "Los domingos no hay reparto." / "El 25 de diciembre (Navidad) no hay reparto."
+function avisoSinReparto(d) {
+  const m = motivoSinReparto(d);
+  if (!m) return "";
+  if (m === "domingo") return "Los domingos no hay reparto.";
+  return `El ${d.getUTCDate()} de ${MESES[d.getUTCMonth()]} (${m}) no hay reparto.`;
 }
 
 function fechaTexto(d) {
@@ -547,17 +571,19 @@ function fechaTexto(d) {
 function deliveryCalendar(now = new Date()) {
   const hoy = limaDay(now);
   let siguiente = sumarDias(hoy, 1);
-  while (!hayReparto(siguiente)) siguiente = sumarDias(siguiente, 1);
+  const saltados = [];
+  while (!hayReparto(siguiente)) { saltados.push(siguiente); siguiente = sumarDias(siguiente, 1); }
   const esManana = siguiente.getTime() - hoy.getTime() === 24 * 60 * 60 * 1000;
   const hayRepartoHoy = hayReparto(hoy);
   const cuando = esManana ? `mañana ${fechaTexto(siguiente)}` : `el ${fechaTexto(siguiente)}`;
   const texto = hayRepartoHoy
-    ? `Un pedido confirmado hoy (${fechaTexto(hoy)}) llega ${cuando}, ${REPARTO_HORARIO}.${esManana ? "" : " Los domingos no hay reparto."}`
-    : `Hoy ${fechaTexto(hoy)} no hay reparto. El próximo reparto es ${cuando}, ${REPARTO_HORARIO}.`;
+    ? `Un pedido confirmado hoy (${fechaTexto(hoy)}) llega ${cuando}, ${REPARTO_HORARIO}.${saltados.length ? " " + [...new Set(saltados.map(avisoSinReparto))].join(" ") : ""}`
+    : `Hoy ${fechaTexto(hoy)} no hay reparto${motivoSinReparto(hoy) === "domingo" ? "" : ` (${motivoSinReparto(hoy)})`}. El próximo reparto es ${cuando}, ${REPARTO_HORARIO}.${saltados.length ? " " + [...new Set(saltados.map(avisoSinReparto))].join(" ") : ""}`;
   return {
     hoy: fechaTexto(hoy),
     horaLima: `${String(hoy.getUTCHours()).padStart(2, "0")}:${String(hoy.getUTCMinutes()).padStart(2, "0")}`,
     hayRepartoHoy,
+    motivoSinRepartoHoy: motivoSinReparto(hoy),
     siguienteDiaDeReparto: fechaTexto(siguiente),
     siguienteEsManana: esManana,
     horario: REPARTO_HORARIO,

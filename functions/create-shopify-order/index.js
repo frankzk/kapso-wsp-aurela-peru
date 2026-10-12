@@ -371,7 +371,14 @@ async function resolveOrderCustomer(config, input, customer, shippingAddress, op
       email,
       firstName: nameParts.firstName,
       lastName: nameParts.lastName,
-      address: shippingAddress,
+      address: {
+        ...shippingAddress,
+        zoneCode: peruZoneCode({
+          region: customer.region || customer.departamento || input.coverage?.region || input.region || "",
+          province: customer.province || customer.provincia || input.coverage?.province || shippingAddress.province || "",
+          city: shippingAddress.city || "",
+        }),
+      },
       note: buildCustomerNote(input),
     });
 
@@ -521,6 +528,12 @@ async function createShopifyCustomer(config, { phone, email, firstName, lastName
   return data.customerCreate || { customer: null, userErrors: [{ message: "empty customerCreate response" }] };
 }
 
+// Direccion de la ficha de cliente. customerCreate valida la provincia contra
+// las zonas de Shopify y rechazaba TODAS las del bot ("Province is invalid"):
+// el bot manda "Lima" y Shopify solo conoce "Lima (provincia)" / "Lima
+// (departamento)". El pedido igual se creaba, pero sin cliente vinculado. Se
+// manda el codigo de zona (provinceCode) y, si no se puede resolver, ninguna
+// provincia: Shopify lo acepta. La direccion del PEDIDO (buildAddress) no cambia.
 function mailingAddressFromOrderAddress(address) {
   if (!address) return null;
   const out = {
@@ -530,11 +543,73 @@ function mailingAddressFromOrderAddress(address) {
     address1: address.address1 || "Por coordinar",
     address2: address.address2 || "",
     city: address.city || "",
-    province: address.province || "",
-    country: address.country || "PE",
+    countryCode: "PE",
+    provinceCode: address.zoneCode || "",
     zip: address.zip || "",
   };
   return Object.fromEntries(Object.entries(out).filter(([, value]) => value !== "" && value !== null && value !== undefined));
+}
+
+// Zonas de Peru en Shopify (GET /admin/api/2026-04/countries.json, 12-oct-2026).
+// "Lima" a secas NO existe: Lima (provincia) = PE-LMA es Lima Metropolitana y
+// Lima (departamento) = PE-LIM es el resto de la region (Huaral, Cañete, Huacho).
+const PE_ZONAS = {
+  amazonas: "PE-AMA", ancash: "PE-ANC", apurimac: "PE-APU", arequipa: "PE-ARE", ayacucho: "PE-AYA",
+  cajamarca: "PE-CAJ", callao: "PE-CAL", cusco: "PE-CUS", cuzco: "PE-CUS", huancavelica: "PE-HUV",
+  huanuco: "PE-HUC", ica: "PE-ICA", junin: "PE-JUN", "la libertad": "PE-LAL", lambayeque: "PE-LAM",
+  loreto: "PE-LOR", "madre de dios": "PE-MDD", moquegua: "PE-MOQ", pasco: "PE-PAS", piura: "PE-PIU",
+  puno: "PE-PUN", "san martin": "PE-SAM", tacna: "PE-TAC", tumbes: "PE-TUM", ucayali: "PE-UCA",
+};
+// Provincias y ciudades de la region Lima que NO son Lima Metropolitana.
+const PE_LIMA_REGION = new Set([
+  "barranca", "cajatambo", "canete", "san vicente de canete", "canta", "huaral", "chancay", "huarochiri",
+  "huaura", "huacho", "oyon", "yauyos", "mala", "chilca", "asia", "lunahuana", "imperial",
+]);
+const PE_CALLAO_DISTRITOS = new Set(["callao", "bellavista", "la perla", "la punta", "carmen de la legua", "carmen de la legua reynoso", "ventanilla", "mi peru"]);
+// Ciudades/provincias frecuentes -> departamento, para cuando el bot manda la
+// ciudad como "provincia" (en los pedidos web aparecen "Chiclayo", "Abancay").
+const PE_CIUDADES = {
+  chiclayo: "PE-LAM", ferrenafe: "PE-LAM", trujillo: "PE-LAL", chepen: "PE-LAL", pacasmayo: "PE-LAL",
+  huancayo: "PE-JUN", tarma: "PE-JUN", jauja: "PE-JUN", satipo: "PE-JUN", "la merced": "PE-JUN",
+  chimbote: "PE-ANC", "nuevo chimbote": "PE-ANC", huaraz: "PE-ANC", casma: "PE-ANC",
+  jaen: "PE-CAJ", chota: "PE-CAJ", iquitos: "PE-LOR", maynas: "PE-LOR", yurimaguas: "PE-LOR",
+  pucallpa: "PE-UCA", "coronel portillo": "PE-UCA", tarapoto: "PE-SAM", moyobamba: "PE-SAM", juanjui: "PE-SAM",
+  juliaca: "PE-PUN", "san roman": "PE-PUN", abancay: "PE-APU", andahuaylas: "PE-APU",
+  huamanga: "PE-AYA", huanta: "PE-AYA", chincha: "PE-ICA", "chincha alta": "PE-ICA", pisco: "PE-ICA",
+  nazca: "PE-ICA", nasca: "PE-ICA", sullana: "PE-PIU", paita: "PE-PIU", talara: "PE-PIU",
+  "tingo maria": "PE-HUC", "leoncio prado": "PE-HUC", ilo: "PE-MOQ", "mariscal nieto": "PE-MOQ",
+  "puerto maldonado": "PE-MDD", tambopata: "PE-MDD", "cerro de pasco": "PE-PAS", oxapampa: "PE-PAS",
+  chachapoyas: "PE-AMA", bagua: "PE-AMA", "bagua grande": "PE-AMA", utcubamba: "PE-AMA",
+  sicuani: "PE-CUS", quillabamba: "PE-CUS", "la convencion": "PE-CUS", camana: "PE-ARE",
+  mollendo: "PE-ARE", islay: "PE-ARE", zarumilla: "PE-TUM",
+};
+
+function normZona(value) {
+  return String(value || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .replace(/\b(departamento|region|provincia|prov|dpto)\b/g, " ")
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Codigo de zona de Shopify para una direccion peruana, o null si no se puede
+// resolver con seguridad (entonces el cliente se crea sin provincia).
+function peruZoneCode({ region, province, city }) {
+  const r = normZona(region);
+  const p = normZona(province);
+  const c = normZona(city);
+  const enLimaOCallao = [r, p].some((v) => v === "lima" || v === "lima metropolitana" || v === "callao");
+  if (r === "callao" || p === "callao" || (enLimaOCallao && PE_CALLAO_DISTRITOS.has(c))) return "PE-CAL";
+  if ([r, p].some((v) => v === "lima" || v === "lima metropolitana")) {
+    return PE_LIMA_REGION.has(p) || PE_LIMA_REGION.has(c) ? "PE-LIM" : "PE-LMA";
+  }
+  if (PE_LIMA_REGION.has(p)) return "PE-LIM";
+  for (const v of [r, p]) if (PE_ZONAS[v]) return PE_ZONAS[v];
+  for (const v of [p, c, r]) if (PE_CIUDADES[v]) return PE_CIUDADES[v];
+  return null;
 }
 
 function buildCustomerNote(input) {

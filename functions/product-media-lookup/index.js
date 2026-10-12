@@ -492,14 +492,37 @@ function buildMediaItems(product, options) {
 
 function imageItem(product, label, url) {
   const safeLabel = label && normalizeSearchText(label) !== "default title" ? label : "Foto";
+  const sendUrl = whatsappImageUrl(url);
   return {
     mediaType: "image",
     type: "image",
     label: safeLabel,
     caption: `${safeLabel} - ${product.title}`,
-    url,
-    mediaUrl: url,
+    url: sendUrl,
+    mediaUrl: sendUrl,
   };
+}
+
+// WhatsApp rechaza imagenes de mas de 5 MB (error 131053 "Media upload error").
+// La foto del frasco de BeeWax pesa 8 MB (4410x4410 px) y fallaba en el 100% de
+// los envios. El CDN de Shopify devuelve una version reducida al vuelo con
+// width/height: con 1600 esa foto queda en ~2 MB, mantiene la proporcion y no
+// recorta, y las fotos mas chicas vuelven tal cual (Shopify no agranda). Solo
+// imagenes del CDN de Shopify; los videos y cualquier otra URL no se tocan.
+const WHATSAPP_IMAGE_MAX_PX = 1600;
+function whatsappImageUrl(url) {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    const shopifyCdn = u.hostname === "cdn.shopify.com" || u.pathname.startsWith("/cdn/shop/");
+    if (!shopifyCdn || !/\.(png|jpe?g|webp|gif)$/i.test(u.pathname)) return url;
+    if (u.searchParams.has("width") || u.searchParams.has("height")) return url;
+    u.searchParams.set("width", String(WHATSAPP_IMAGE_MAX_PX));
+    u.searchParams.set("height", String(WHATSAPP_IMAGE_MAX_PX));
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 function normalizePublicOptions(product) {
@@ -857,6 +880,7 @@ function json(body, status = 200) {
 }
 
 globalThis.__aurelaProductMediaLookup = {
+  whatsappImageUrl,
   buildMediaItems,
   detectVideoRequest,
   fetchProductVideo,

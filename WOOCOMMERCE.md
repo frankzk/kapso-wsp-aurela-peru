@@ -35,7 +35,7 @@ Sigue las reglas de Kapta (el sistema de operaciones lee los pedidos de la tiend
 
 | Variable | Valor |
 |---|---|
-| `WOO_STORE_URL` | Hasta el lunes, para probar: `https://64-176-29-13.sslip.io`. Desde la apertura: `https://aurela.pe` |
+| `WOO_STORE_URL` | Hasta la apertura, para probar: `https://64-176-29-13.sslip.io`. Desde la apertura: `https://aurela.pe` |
 | `WOO_CONSUMER_KEY` / `WOO_CONSUMER_SECRET` | La clave de la API del usuario `kapso` (WooCommerce → Ajustes → Avanzado → REST API, Lectura/Escritura) |
 | `STORE_BACKEND` | `shopify` hasta la apertura; `woocommerce` desde la apertura |
 | `KAPTA_CHANNEL` | Opcional: el valor que diga Kapta (por defecto `whatsapp_bot`) |

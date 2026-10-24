@@ -457,7 +457,18 @@ async function handleWooOrder(input, env) {
     customer_note: specialNote ? `Fecha/hora solicitada: ${specialNote}` : "",
     meta_data: wooMeta(input, woo, discountTotal),
   };
-  const note = buildNote(input, null) + (stockToValidate
+  // La nota con los productos ya resueltos (nombre y talla) y el total calculado, aunque el agente solo haya mandado
+  // el handle o el ID de la variante.
+  const orderTotal = money((computed ? computed.subtotalBeforeDiscount : lines.reduce((s, l) => s + l.price * l.quantity, 0)) - discountTotal + shippingFee);
+  const noteInput = {
+    ...input,
+    items: lines.map((line) => ({
+      quantity: line.quantity,
+      productTitle: [line.product.title, line.variant.title !== "Default Title" ? line.variant.title : ""].filter(Boolean).join(" - "),
+    })),
+    quote: { ...quote, total: quote.total || orderTotal },
+  };
+  const note = buildNote(noteInput, null) + (stockToValidate
     ? `\nSTOCK POR VALIDAR: ${outOfStockVariants.map((v) => v.title || v.id).join("; ") || "lo pidio el agente"}`
     : "");
 

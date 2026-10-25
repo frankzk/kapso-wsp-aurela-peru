@@ -360,16 +360,35 @@ function titleCasePlace(value) {
 }
 
 /** Departamento, provincia y distrito: de check-coverage (normalized) o de lo que dio el cliente. */
+// Distritos de Lima Metropolitana (los de check-coverage): con ellos se sabe el departamento LMA aunque el bot mande
+// solo el distrito, que pasa seguido ("La Molina", "Cercado de Lima", sin region ni provincia).
+const WOO_LIMA_METRO_DISTRITOS = new Set([
+  "barranco", "brena", "cercado de lima", "centro de lima", "jesus maria", "la victoria", "lima", "lince",
+  "magdalena del mar", "magdalena", "miraflores", "pueblo libre", "rimac", "san borja", "san isidro", "san luis",
+  "san miguel", "santiago de surco", "surco", "surquillo", "ancon", "carabayllo", "comas", "independencia",
+  "los olivos", "puente piedra", "san martin de porres", "smp", "santa rosa", "ate", "ate vitarte", "vitarte",
+  "chaclacayo", "cieneguilla", "el agustino", "lurigancho chosica", "lurigancho", "chosica", "san juan de lurigancho",
+  "sjl", "santa anita", "la molina", "chorrillos", "lurin", "pachacamac", "pucusana", "punta hermosa", "punta negra",
+  "san bartolo", "san juan de miraflores", "sjm", "santa maria del mar", "villa el salvador", "ves",
+  "villa maria del triunfo", "vmt",
+]);
+
 function wooLocation(input) {
   const customer = input.customer || {};
-  const normalized = input.coverage?.normalized || {};
-  const region = normalizeSearchText(normalized.region || customer.region || customer.departamento || "");
-  const province = normalizeSearchText(normalized.province || customer.province || customer.provincia || "");
-  const districtRaw = String(customer.district || customer.distrito || normalized.district || "").trim();
-  let state = "";
-  if (region === "callao" || province === "callao") state = "CAL";
-  else if (region === "lima" || (!region && province === "lima")) state = province && province !== "lima" ? "LIM" : "LMA";
-  else state = WOO_STATE_CODES[region] || "";
+  const coverage = input.coverage || {};
+  const normalized = coverage.normalized || {};
+  // El bot manda la ubicacion en sitios distintos segun el caso: coverage.normalized (respuesta de check_coverage),
+  // los datos del cliente o coverage a secas. Se toma el primero que tenga valor.
+  const regionRaw = normalized.region || customer.region || customer.departamento || coverage.region || "";
+  const provinceRaw = normalized.province || customer.province || customer.provincia || coverage.province || "";
+  const districtRaw = String(customer.district || customer.distrito || normalized.district || coverage.district || "").trim();
+  const region = normalizeSearchText(regionRaw);
+  const province = normalizeSearchText(provinceRaw);
+  // Mismas reglas que la provincia de Shopify (peruZoneCode: Callao por distrito, resto de Lima, ciudades); los
+  // codigos de WooCommerce son los mismos sin el "PE-".
+  let state = (peruZoneCode({ region: regionRaw, province: provinceRaw, city: districtRaw }) || "").replace(/^PE-/, "");
+  if (!state && WOO_LIMA_METRO_DISTRITOS.has(normZona(districtRaw))) state = "LMA";
+  if (!state) state = WOO_STATE_CODES[region] || "";
   const district = /[A-ZÁÉÍÓÚÑ]/.test(districtRaw) ? districtRaw : titleCasePlace(districtRaw);
   return { state, district, province, region };
 }

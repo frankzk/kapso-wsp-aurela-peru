@@ -46,6 +46,16 @@ const call = async (input, e = env) => (await api.handleRequest(new Request("htt
   assert.strictEqual(api.wooLocation({ coverage: { normalized: { district: "ventanilla", province: "callao", region: "callao" } } }).state, "CAL");
   assert.strictEqual(api.wooLocation({ customer: { district: "Cerro Colorado", region: "Arequipa" } }).state, "ARE");
   assert.strictEqual(api.wooLocation({ coverage: { normalized: { district: "san juan de lurigancho", province: "lima", region: "lima" } } }).district, "San Juan de Lurigancho");
+  // Como lo manda el bot en la practica (pedidos reales del 22 al 24-10): a veces solo el distrito.
+  assert.strictEqual(api.wooLocation({ coverage: { district: "Tambopata", shippingMode: "contraentrega" }, customer: { district: "Tambopata" } }).state, "MDD");
+  assert.strictEqual(api.wooLocation({ customer: { district: "La Molina" } }).state, "LMA");
+  assert.strictEqual(api.wooLocation({ customer: { district: "Cercado de Lima" } }).state, "LMA");
+  assert.strictEqual(api.wooLocation({ customer: { district: "Callao", region: "Lima" } }).state, "CAL", "Callao no es LMA");
+  const soloCoverage = api.wooLocation({ coverage: { district: "Miraflores", province: "Lima" }, customer: {} });
+  assert.deepStrictEqual([soloCoverage.state, soloCoverage.district], ["LMA", "Miraflores"], "distrito desde coverage");
+  assert.strictEqual(api.wooLocation({ coverage: { region: "junin", district: "huancayo", province: "junin" }, customer: { district: "El Tambo", region: "Junin" } }).state, "JUN");
+  assert.strictEqual(api.wooLocation({ customer: { district: "Cercado", region: "Arequipa", province: "Arequipa" } }).state, "ARE");
+  assert.strictEqual(api.wooLocation({ customer: { district: "Distrito Desconocido" } }).state, "", "sin datos: vacio, no inventa");
 
   // Reparto del descuento: suma exacta.
   const t = api.spreadWooDiscount([{ price: 119, quantity: 3 }, { price: 35, quantity: 1 }], 119);

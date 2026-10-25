@@ -382,7 +382,9 @@ function wooMeta(input, woo, discountTotal, extraTags = []) {
   };
   add("kapta_channel", woo.kaptaChannel);
   for (const attr of buildCustomAttributes(input, null)) add(attr.key, attr.value);
-  add("kapso_tags", [...buildTags(input), ...extraTags].join(","));
+  // Etiquetas en kapta_tags: es el metadato que lee Kapta (WOO_META.tags, MOM §38.5: promo-whatsapp, contraentrega,
+  // stock-por-validar, regalos...). Antes iba en kapso_tags, que nadie leia, y Kapta solo veia el canal.
+  add("kapta_tags", [...buildTags(input), ...extraTags].join(","));
   const ref = input.ctwaReferral;
   if (ref?.source_id) {
     // Atribucion para Kapta (pedido sin checkout): los utm visibles, con el anuncio de origen.

@@ -98,7 +98,7 @@ const call = async (input, e = env) => (await api.handleRequest(new Request("htt
   const gift = egg.orderPreview.line_items.find((l) => l.product_id === 61);
   assert.deepStrictEqual(gift, { product_id: 61, quantity: 1, subtotal: "0.00", total: "0.00" });
   assert.strictEqual(egg.pricing.subtotal, 39, "el regalo no suma al precio");
-  assert.ok(egg.orderPreview.meta_data.some((m) => m.key === "kapso_tags" && m.value.includes("regalo-eggmixer")));
+  assert.ok(egg.orderPreview.meta_data.some((m) => m.key === "kapta_tags" && m.value.includes("regalo-eggmixer")));
   assert.ok(egg.internalNote.includes("Regalo(s): 1 x Regalo EggMixer"), egg.internalNote);
   // SunTent: sus regalos no estan en la tienda -> el pedido sale igual y la nota pide agregarlos.
   const tent = await call({ ...input, items: [{ handle: "suntent", quantity: 1 }], dryRun: true });

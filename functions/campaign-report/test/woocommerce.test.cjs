@@ -13,6 +13,8 @@ const PAGE1 = [
 const PAGE2 = [
   { id: 13, status: "cod-pending", total: "99.00", currency: "PEN", date_created_gmt: "2026-10-29T03:00:00", meta_data: meta({ source: "whatsapp-bot" }) },
   { id: 14, status: "failed", total: "500.00", currency: "PEN", date_created_gmt: "2026-10-28T17:00:00", meta_data: meta({ source: "whatsapp-bot", ctwa_ad_id: "AD1" }) },
+  // Pago con Flow que nunca se pago: no es un pedido (en Shopify seria un checkout abandonado).
+  { id: 15, status: "pending", payment_method: "flowpayment", date_paid_gmt: null, total: "300.00", currency: "PEN", date_created_gmt: "2026-10-28T18:00:00", meta_data: meta({ kapta_channel: "web_formulario", ctwa_ad_id: "AD1" }) },
 ];
 const SHOPIFY = [
   { id: "1", name: "#AUR1", createdAt: "2026-10-27T15:00:00Z", currentTotalPriceSet: { shopMoney: { amount: "219.00", currencyCode: "PEN" } }, customAttributes: [{ key: "source", value: "whatsapp-bot" }, { key: "ctwa_ad_id", value: "AD1" }] },
@@ -22,7 +24,7 @@ const calls = [];
 let shopifyStatus = 200;
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
-  calls.push({ url: u, auth: init.headers?.Authorization });
+  calls.push({ url: u, auth: init.headers?.Authorization, body: init.body ? String(init.body) : "" });
   if (u.includes("/wp-json/wc/v3/orders")) {
     const page = new URL(u).searchParams.get("page");
     return { ok: true, status: 200, headers: { get: (h) => (h.toLowerCase() === "x-wp-totalpages" ? "2" : null) }, json: async () => (page === "1" ? PAGE1 : PAGE2) };
@@ -61,6 +63,8 @@ const req = { method: "GET", url: "https://x/?key=K&format=json&since=2026-10-27
   calls.length = 0;
   r = await (await api.handleRequest(req, { ...env, sHOPIFYADMINACCESSTOKEN: "shpat" })).json();
   assert.strictEqual(r.totals.ordersScanned, 4, "3 de WooCommerce + 1 de Shopify");
+  const gql = calls.find((c) => c.url.includes("graphql.json"));
+  assert.ok(gql.body.includes("created_at:<='2026-10-27T23:59:59Z'"), "a Shopify solo hasta su cierre (28-10 00:00 UTC)");
   assert.strictEqual(r.ads[0].orders, 2, "AD1: uno en cada tienda");
   assert.strictEqual(r.ads[0].revenue, 457, "238 + 219");
 
@@ -69,6 +73,14 @@ const req = { method: "GET", url: "https://x/?key=K&format=json&since=2026-10-27
   r = await (await api.handleRequest(req, { ...env, sHOPIFYADMINACCESSTOKEN: "shpat" })).json();
   assert.strictEqual(r.totals.ordersScanned, 3, "solo WooCommerce");
   assert.ok(r.warnings.some((w) => w.includes("pedidos de Shopify")), "avisa que Shopify no respondio");
+
+  // Rango despues del cierre de Shopify: no se le pide nada (ni aviso).
+  shopifyStatus = 200;
+  calls.length = 0;
+  const despues = { ...req, url: "https://x/?key=K&format=json&since=2026-10-29&until=2026-10-30" };
+  r = await (await api.handleRequest(despues, { ...env, sHOPIFYADMINACCESSTOKEN: "shpat" })).json();
+  assert.ok(!calls.some((c) => c.url.includes("graphql.json")), "sin llamadas a Shopify despues del cierre");
+  assert.ok(!(r.warnings || []).some((w) => w.includes("pedidos de Shopify")), "sin aviso de Shopify");
 
   // Sin las claves de WooCommerce: error claro.
   const sinClave = await api.handleRequest(req, { ...env, wOOCONSUMERKEY: undefined });

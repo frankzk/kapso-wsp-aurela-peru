@@ -37,11 +37,11 @@ Sigue las reglas de Kapta (el sistema de operaciones lee los pedidos de la tiend
   (cod-core lo arma con el metadato `cod_core_cupon`).
 - Envío como línea de envío: gratis con más de S/ 40, si no S/ 10 (igual que en Shopify).
 - **Regalos por cantidad** (`GIFT_LADDERS`, EggMixer y SunTent): las mismas escaleras que en Shopify, como líneas a
-  S/ 0 (se buscan en el catálogo por el ID de variante de Shopify) y la etiqueta en `kapso_tags`. Si un regalo no está
+  S/ 0 (se buscan en el catálogo por el ID de variante de Shopify) y la etiqueta en `kapta_tags`. Si un regalo no está
   en el catálogo, el pedido sale igual y la nota dice "REGALO POR AGREGAR A MANO".
 - Nota interna: la corta de octubre (sin el total, que el pedido ya muestra).
 - Metadatos: `kapta_channel` (`whatsapp_bot`, a confirmar con Kapta), `source=whatsapp-bot`, `kapso_conversation_id`,
-  `kapso_phone_number_id`, `kapso_tags`, `ctwa_*` y, si llegó por un anuncio, `utm_id` (el anuncio), `utm_source` y
+  `kapso_phone_number_id`, `kapta_tags` (las etiquetas: es el metadato que lee Kapta), `ctwa_*` y, si llegó por un anuncio, `utm_id` (el anuncio), `utm_source` y
   `utm_medium`.
 - La fecha u hora de entrega pedida va en la nota del cliente; el resumen interno del bot, como nota privada.
 - Respuesta igual que antes: `order.name` = `#AUR9…` (el número del pedido), `order.id` el de WooCommerce.

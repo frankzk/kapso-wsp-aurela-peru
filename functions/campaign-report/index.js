@@ -28,6 +28,9 @@ const MAX_ORDER_PAGES = 12; // 12 x 250 = 3000 ordenes por rango
 const WOO_PER_PAGE = 100;
 const MAX_WOO_PAGES = 30; // 30 x 100 = 3000 pedidos por rango
 const WOO_SKIP_STATUSES = new Set(["failed", "checkout-draft"]);
+// Shopify cierra la tienda de Aurela el 28-10-2026 00:00 UTC: despues de esa fecha no se le piden pedidos (no
+// tiene, y la API ya no responde). Se cambia con el secreto SHOPIFY_CLOSED_AT.
+const DEFAULT_SHOPIFY_CLOSED_AT = "2026-10-28T00:00:00Z";
 const MAX_META_PAGES = 20;
 const MAX_CONV_PAGES = 50; // por numero: 50 x 100 = 5000 conversaciones por rango
 const MAX_CONV_DAYS = 16;  // la conversion se calcula para rangos <= 16 dias (evita timeouts del worker)
@@ -132,6 +135,7 @@ function getConfig(env = globalThis) {
     wooStoreUrl: String(g("WOO_STORE_URL", "wOOSTOREURL") || "").replace(/\/+$/, ""),
     wooKey: g("WOO_CONSUMER_KEY", "wOOCONSUMERKEY"),
     wooSecret: g("WOO_CONSUMER_SECRET", "wOOCONSUMERSECRET"),
+    shopifyClosedAt: g("SHOPIFY_CLOSED_AT", "sHOPIFYCLOSEDAT") || DEFAULT_SHOPIFY_CLOSED_AT,
     shopDomain: g("SHOPIFY_SHOP_DOMAIN", "sHOPIFYSHOPDOMAIN") || DEFAULT_SHOP_DOMAIN,
     apiVersion: g("SHOPIFY_API_VERSION", "sHOPIFYAPIVERSION") || DEFAULT_API_VERSION,
     token: g("SHOPIFY_ADMIN_ACCESS_TOKEN", "sHOPIFYADMINACCESSTOKEN"),
@@ -234,9 +238,14 @@ async function fetchOrderAggregates(config, range) {
   const sourceWarnings = [];
   if (config.storeBackend === "woocommerce") {
     sources.push(await fetchWooOrders(config, range));
-    if (config.token) {
+    // Shopify solo para la parte del rango anterior a su cierre.
+    const closedAt = Date.parse(config.shopifyClosedAt);
+    const shopifyRange = Number.isFinite(closedAt) && Date.parse(range.untilIso) >= closedAt
+      ? { ...range, untilIso: new Date(closedAt - 1000).toISOString().replace(/\.\d{3}Z$/, "Z") }
+      : range;
+    if (config.token && Date.parse(shopifyRange.untilIso) >= Date.parse(range.sinceIso)) {
       try {
-        sources.push(await fetchShopifyOrders(config, range));
+        sources.push(await fetchShopifyOrders(config, shopifyRange));
       } catch (error) {
         sourceWarnings.push(`No se pudieron leer los pedidos de Shopify (antes de la apertura): ${safeError(error)}`);
       }
@@ -381,7 +390,7 @@ async function fetchWooOrders(config, range) {
       page: String(page),
       orderby: "date",
       order: "asc",
-      _fields: "id,status,total,currency,date_created_gmt,meta_data",
+      _fields: "id,status,total,currency,date_created_gmt,date_paid_gmt,payment_method,meta_data",
     });
     const response = await fetch(`${config.wooStoreUrl}/wp-json/wc/v3/orders?${query}`, {
       headers: { Authorization: auth, Accept: "application/json" },
@@ -393,6 +402,8 @@ async function fetchWooOrders(config, range) {
     const batch = await response.json();
     for (const order of Array.isArray(batch) ? batch : []) {
       if (WOO_SKIP_STATUSES.has(order.status)) continue;
+      // Pago en linea (Flow) que nunca se pago: en Shopify seria un checkout abandonado, no un pedido.
+      if (order.payment_method && order.payment_method !== "cod" && !order.date_paid_gmt && (order.status === "pending" || order.status === "cancelled")) continue;
       orders.push({
         createdAt: order.date_created_gmt ? `${order.date_created_gmt}Z` : null,
         amount: Number(order.total || 0),

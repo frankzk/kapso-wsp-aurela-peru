@@ -1,11 +1,16 @@
 // Dashboard de ventas por campana de WhatsApp (Click-to-WhatsApp).
 //
-// Cruza las ordenes de Shopify (atribuidas con ctwa_ad_id en los note_attributes
-// por la funcion create-shopify-order) con el gasto publicitario de Meta Marketing
-// API para reportar, por anuncio y por campana: pedidos, ingresos, gasto, CPA y ROAS.
+// Cruza las ordenes de la tienda (atribuidas con ctwa_ad_id por la funcion
+// create-shopify-order: note_attributes en Shopify, metadatos del pedido en
+// WooCommerce) con el gasto publicitario de Meta Marketing API para reportar, por
+// anuncio y por campana: pedidos, ingresos, gasto, CPA y ROAS.
+//
+// Tienda: Shopify por defecto; con STORE_BACKEND=woocommerce lee los pedidos de
+// WooCommerce (WOO_STORE_URL, WOO_CONSUMER_KEY, WOO_CONSUMER_SECRET) y, si sigue
+// configurado el token de Shopify, suma los de antes de la apertura.
 //
 // Tambien reporta la CONVERSION de WhatsApp: conversaciones nuevas (Kapso API)
-// vs pedidos del bot (Shopify, source=whatsapp-bot), con tasa por dia. La
+// vs pedidos del bot (source=whatsapp-bot), con tasa por dia. La
 // conversion se calcula para rangos cortos (<= MAX_CONV_DAYS dias).
 //
 // Endpoint PUBLICO protegido por access key (expone datos de ventas):
@@ -20,6 +25,9 @@ const DEFAULT_SHOP_DOMAIN = "aurela-peru.myshopify.com";
 const DEFAULT_API_VERSION = "2026-04";
 const DEFAULT_META_API_VERSION = "v21.0";
 const MAX_ORDER_PAGES = 12; // 12 x 250 = 3000 ordenes por rango
+const WOO_PER_PAGE = 100;
+const MAX_WOO_PAGES = 30; // 30 x 100 = 3000 pedidos por rango
+const WOO_SKIP_STATUSES = new Set(["failed", "checkout-draft"]);
 const MAX_META_PAGES = 20;
 const MAX_CONV_PAGES = 50; // por numero: 50 x 100 = 5000 conversaciones por rango
 const MAX_CONV_DAYS = 16;  // la conversion se calcula para rangos <= 16 dias (evita timeouts del worker)
@@ -120,6 +128,10 @@ async function readParams(request) {
 function getConfig(env = globalThis) {
   const g = (a, b) => env[a] || env[b] || globalThis[a] || globalThis[b];
   return {
+    storeBackend: String(g("STORE_BACKEND", "sTOREBACKEND") || "").toLowerCase() === "woocommerce" ? "woocommerce" : "shopify",
+    wooStoreUrl: String(g("WOO_STORE_URL", "wOOSTOREURL") || "").replace(/\/+$/, ""),
+    wooKey: g("WOO_CONSUMER_KEY", "wOOCONSUMERKEY"),
+    wooSecret: g("WOO_CONSUMER_SECRET", "wOOCONSUMERSECRET"),
     shopDomain: g("SHOPIFY_SHOP_DOMAIN", "sHOPIFYSHOPDOMAIN") || DEFAULT_SHOP_DOMAIN,
     apiVersion: g("SHOPIFY_API_VERSION", "sHOPIFYAPIVERSION") || DEFAULT_API_VERSION,
     token: g("SHOPIFY_ADMIN_ACCESS_TOKEN", "sHOPIFYADMINACCESSTOKEN"),
@@ -216,8 +228,24 @@ function clampInt(value, min, max, fallback) {
 // ---------------------------------------------------------------------------
 
 async function fetchOrderAggregates(config, range) {
+  // Desde la apertura de aurela.pe (STORE_BACKEND=woocommerce) los pedidos estan en WooCommerce. Si sigue el token
+  // de Shopify, se suman los de antes de la apertura; si Shopify ya no responde (tienda cerrada), solo se avisa.
+  const sources = [];
+  const sourceWarnings = [];
+  if (config.storeBackend === "woocommerce") {
+    sources.push(await fetchWooOrders(config, range));
+    if (config.token) {
+      try {
+        sources.push(await fetchShopifyOrders(config, range));
+      } catch (error) {
+        sourceWarnings.push(`No se pudieron leer los pedidos de Shopify (antes de la apertura): ${safeError(error)}`);
+      }
+    }
+  } else {
+    sources.push(await fetchShopifyOrders(config, range));
+  }
+
   const byAd = new Map();
-  let cursor = null;
   let currency = "PEN";
   let ordersScanned = 0;
   let attributedOrders = 0;
@@ -230,6 +258,70 @@ async function fetchOrderAggregates(config, range) {
   // Filas crudas orden-bot {day, convId} para segmentar CTWA/organico fuera del
   // worker (la paginacion CTWA server-side excede el CPU; se hace client-side).
   const whatsappOrderRows = [];
+  const truncated = sources.some((source) => source.truncated);
+
+  for (const order of sources.flatMap((source) => source.orders)) {
+    ordersScanned += 1;
+    const amount = order.amount;
+    if (order.currency) currency = order.currency;
+    if (Number.isFinite(amount)) totalRevenue += amount;
+
+    const attrs = order.attrs;
+
+    // Pedidos generados por el bot de WhatsApp (create-shopify-order marca source=whatsapp-bot).
+    // Es el numerador de la conversion conversaciones -> pedidos.
+    if (attrs.source === "whatsapp-bot") {
+      whatsappOrders += 1;
+      if (Number.isFinite(amount)) whatsappRevenue += amount;
+      const day = limaDay(order.createdAt);
+      if (day) whatsappOrdersByDay.set(day, (whatsappOrdersByDay.get(day) || 0) + 1);
+      // Conv id para cruzar orden<->conversacion (segmentacion CTWA en el digest).
+      const convId = attrs.kapso_conversation_id ? String(attrs.kapso_conversation_id) : null;
+      if (convId) whatsappOrderConvIds.add(convId);
+      whatsappOrderRows.push({ day: day || null, convId });
+    }
+
+    const adId = attrs.ctwa_ad_id;
+    if (!adId) continue;
+
+    attributedOrders += 1;
+    if (Number.isFinite(amount)) attributedRevenue += amount;
+
+    const entry = byAd.get(adId) || {
+      adId,
+      orders: 0,
+      revenue: 0,
+      headline: attrs.ctwa_headline || null,
+      sourceType: attrs.ctwa_source_type || null,
+      sourceUrl: attrs.ctwa_source_url || null,
+    };
+    entry.orders += 1;
+    if (Number.isFinite(amount)) entry.revenue += amount;
+    if (!entry.headline && attrs.ctwa_headline) entry.headline = attrs.ctwa_headline;
+    byAd.set(adId, entry);
+  }
+
+  return {
+    byAd,
+    currency,
+    ordersScanned,
+    attributedOrders,
+    totalRevenue,
+    attributedRevenue,
+    whatsappOrders,
+    whatsappRevenue,
+    whatsappOrdersByDay,
+    whatsappOrderConvIds,
+    whatsappOrderRows,
+    truncated,
+    sourceWarnings,
+  };
+}
+
+// Pedidos de Shopify del rango: { createdAt, amount, currency, attrs } (attrs = note_attributes).
+async function fetchShopifyOrders(config, range) {
+  const orders = [];
+  let cursor = null;
   let truncated = false;
 
   const queryString = `created_at:>='${range.sinceIso}' created_at:<='${range.untilIso}'`;
@@ -250,48 +342,14 @@ async function fetchOrderAggregates(config, range) {
 
   for (let page = 0; page < MAX_ORDER_PAGES; page += 1) {
     const data = await shopifyGraphql(config, gql, { q: queryString, cursor });
-    const orders = data.orders?.nodes || [];
-
-    for (const order of orders) {
-      ordersScanned += 1;
+    for (const order of data.orders?.nodes || []) {
       const money = order.currentTotalPriceSet?.shopMoney;
-      const amount = Number(money?.amount || 0);
-      if (money?.currencyCode) currency = money.currencyCode;
-      if (Number.isFinite(amount)) totalRevenue += amount;
-
-      const attrs = attributesToMap(order.customAttributes);
-
-      // Pedidos generados por el bot de WhatsApp (create-shopify-order marca source=whatsapp-bot).
-      // Es el numerador de la conversion conversaciones -> pedidos.
-      if (attrs.source === "whatsapp-bot") {
-        whatsappOrders += 1;
-        if (Number.isFinite(amount)) whatsappRevenue += amount;
-        const day = limaDay(order.createdAt);
-        if (day) whatsappOrdersByDay.set(day, (whatsappOrdersByDay.get(day) || 0) + 1);
-        // Conv id para cruzar orden<->conversacion (segmentacion CTWA en el digest).
-        const convId = attrs.kapso_conversation_id ? String(attrs.kapso_conversation_id) : null;
-        if (convId) whatsappOrderConvIds.add(convId);
-        whatsappOrderRows.push({ day: day || null, convId });
-      }
-
-      const adId = attrs.ctwa_ad_id;
-      if (!adId) continue;
-
-      attributedOrders += 1;
-      if (Number.isFinite(amount)) attributedRevenue += amount;
-
-      const entry = byAd.get(adId) || {
-        adId,
-        orders: 0,
-        revenue: 0,
-        headline: attrs.ctwa_headline || null,
-        sourceType: attrs.ctwa_source_type || null,
-        sourceUrl: attrs.ctwa_source_url || null,
-      };
-      entry.orders += 1;
-      if (Number.isFinite(amount)) entry.revenue += amount;
-      if (!entry.headline && attrs.ctwa_headline) entry.headline = attrs.ctwa_headline;
-      byAd.set(adId, entry);
+      orders.push({
+        createdAt: order.createdAt,
+        amount: Number(money?.amount || 0),
+        currency: money?.currencyCode || null,
+        attrs: attributesToMap(order.customAttributes),
+      });
     }
 
     const pageInfo = data.orders?.pageInfo;
@@ -300,20 +358,55 @@ async function fetchOrderAggregates(config, range) {
     if (page === MAX_ORDER_PAGES - 1) truncated = true;
   }
 
-  return {
-    byAd,
-    currency,
-    ordersScanned,
-    attributedOrders,
-    totalRevenue,
-    attributedRevenue,
-    whatsappOrders,
-    whatsappRevenue,
-    whatsappOrdersByDay,
-    whatsappOrderConvIds,
-    whatsappOrderRows,
-    truncated,
-  };
+  return { orders, truncated };
+}
+
+// Pedidos de WooCommerce del rango (API REST /wp-json/wc/v3/orders, con la clave del usuario kapso). Los dias del
+// rango van en la hora de la tienda (Lima). attrs = metadatos del pedido: create-shopify-order guarda ahi los mismos
+// atributos que en Shopify (source, ctwa_ad_id, ctwa_headline...). Sin los fallidos ni los borradores del checkout.
+async function fetchWooOrders(config, range) {
+  if (!config.wooStoreUrl || !config.wooKey || !config.wooSecret) {
+    throw new Error("Falta WOO_STORE_URL, WOO_CONSUMER_KEY o WOO_CONSUMER_SECRET");
+  }
+  const orders = [];
+  let truncated = false;
+  const auth = `Basic ${btoa(`${config.wooKey}:${config.wooSecret}`)}`;
+
+  for (let page = 1; page <= MAX_WOO_PAGES; page += 1) {
+    const query = new URLSearchParams({
+      after: `${range.since}T00:00:00`,
+      before: `${addDayStr(range.until)}T00:00:00`,
+      status: "any",
+      per_page: String(WOO_PER_PAGE),
+      page: String(page),
+      orderby: "date",
+      order: "asc",
+      _fields: "id,status,total,currency,date_created_gmt,meta_data",
+    });
+    const response = await fetch(`${config.wooStoreUrl}/wp-json/wc/v3/orders?${query}`, {
+      headers: { Authorization: auth, Accept: "application/json" },
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`WooCommerce ${response.status}: ${text.slice(0, 200)}`);
+    }
+    const batch = await response.json();
+    for (const order of Array.isArray(batch) ? batch : []) {
+      if (WOO_SKIP_STATUSES.has(order.status)) continue;
+      orders.push({
+        createdAt: order.date_created_gmt ? `${order.date_created_gmt}Z` : null,
+        amount: Number(order.total || 0),
+        currency: order.currency || null,
+        attrs: attributesToMap(order.meta_data),
+      });
+    }
+
+    const totalPages = parseInt(response.headers.get("x-wp-totalpages") || "1", 10);
+    if (!Array.isArray(batch) || page >= totalPages) break;
+    if (page === MAX_WOO_PAGES) truncated = true;
+  }
+
+  return { orders, truncated };
 }
 
 function attributesToMap(customAttributes) {
@@ -610,8 +703,9 @@ function buildReport({ sales, meta, conv, range, config }) {
   if (!conversation.configured) warnings.push("Falta KAPSO_API_KEY en la funcion: no se puede calcular la conversion (conversaciones -> pedidos).");
   if (!meta.configured) warnings.push("Meta Marketing API no esta conectada: se muestran ventas atribuidas, pero sin gasto, CPA ni ROAS. Configura META_ACCESS_TOKEN y META_AD_ACCOUNT_ID para activarlo.");
   if (meta.configured && meta.error) warnings.push(`No se pudo leer Meta Ads: ${meta.error}`);
-  if (!sameCurrency) warnings.push(`La moneda de Shopify (${sales.currency}) difiere de la de Meta (${meta.accountCurrency}); CPA y ROAS pueden no ser comparables.`);
-  if (sales.truncated) warnings.push(`Se alcanzo el limite de ${MAX_ORDER_PAGES * 250} ordenes; acota el rango de fechas para ver todo.`);
+  for (const warning of sales.sourceWarnings || []) warnings.push(warning);
+  if (!sameCurrency) warnings.push(`La moneda de la tienda (${sales.currency}) difiere de la de Meta (${meta.accountCurrency}); CPA y ROAS pueden no ser comparables.`);
+  if (sales.truncated) warnings.push("Se alcanzo el limite de 3000 ordenes; acota el rango de fechas para ver todo.");
 
   return {
     range: { since: range.since, until: range.until, days: range.days },

@@ -40,6 +40,10 @@ async function handleRequest(request, env = globalThis) {
       });
     }
 
+    if ((await getStoreBackend(env, input)) === "woocommerce") {
+      return await handleWooOrder(input, env);
+    }
+
     const config = await getConfig(env);
     const dryRun = Boolean(input.dryRun || input.dry_run);
     input.ctwaReferral = await fetchCtwaReferral(env, input);
@@ -119,6 +123,414 @@ async function handleRequest(request, env = globalThis) {
   } catch (error) {
     return json({ ok: false, reason: "order_create_error", error: safeError(error) });
   }
+}
+
+// ---------------------------------------------------------------------------
+// WooCommerce (tienda nueva de aurela.pe, desde el 27-10-2026)
+//
+// Con STORE_BACKEND=woocommerce (variable de la funcion o KV) el pedido se crea en WooCommerce por su API REST en
+// vez de Shopify. Los productos se resuelven con el catalogo publico de la tienda (/products.json, mismo formato
+// y mismos IDs de Shopify, lo sirve el plugin cod-core) y el pedido sigue las reglas de Kapta: metodo "cod", estado
+// "Por confirmar" (cod-pending), departamento con el codigo de WooCommerce, distrito en city, envio como linea de
+// envio, descuento como cupon (cod-core lo arma con el metadato cod_core_cupon) y kapta_channel.
+// Configuracion (variables de la funcion o KV): WOO_STORE_URL (https://aurela.pe), WOO_CONSUMER_KEY,
+// WOO_CONSUMER_SECRET, KAPTA_CHANNEL (por defecto "whatsapp_bot") y WOO_COUPON_CODE (por defecto
+// "aurela-whatsapp-promo"). Para probar sin cambiar el bot real: input.storeBackend = "woocommerce".
+// ---------------------------------------------------------------------------
+
+const WOO_DEFAULT_CHANNEL = "whatsapp_bot";
+const WOO_DEFAULT_COUPON = "aurela-whatsapp-promo";
+const WOO_CATALOG_TTL_MS = 5 * 60 * 1000;
+const WOO_MAX_CATALOG_PAGES = 20;
+
+// Departamento (normalizado, sin tildes) -> codigo de WooCommerce. Lima: LMA (provincia de Lima) o LIM (resto).
+const WOO_STATE_CODES = {
+  amazonas: "AMA", ancash: "ANC", apurimac: "APU", arequipa: "ARE", ayacucho: "AYA", cajamarca: "CAJ",
+  callao: "CAL", "el callao": "CAL", "prov const del callao": "CAL", cusco: "CUS", cuzco: "CUS", huancavelica: "HUV",
+  huanuco: "HUC", ica: "ICA", junin: "JUN", "la libertad": "LAL", lambayeque: "LAM", loreto: "LOR",
+  "madre de dios": "MDD", moquegua: "MOQ", pasco: "PAS", piura: "PIU", puno: "PUN", "san martin": "SAM",
+  tacna: "TAC", tumbes: "TUM", ucayali: "UCA",
+};
+
+function wooEnvKey(name) {
+  return name.replace(/_/g, "").replace(/^./, (c) => c.toLowerCase());
+}
+
+async function getEnvValue(env, name) {
+  const direct = env?.[name] || env?.[wooEnvKey(name)] || globalThis[name] || globalThis[wooEnvKey(name)];
+  if (direct) return String(direct);
+  if (env?.KV?.get) {
+    try {
+      const value = await env.KV.get(name);
+      if (value) return String(value);
+    } catch {
+      // Sin KV: queda el valor por defecto.
+    }
+  }
+  return "";
+}
+
+async function getStoreBackend(env, input) {
+  const override = String(input?.storeBackend || input?.store_backend || "").toLowerCase();
+  if (override === "woocommerce" || override === "shopify") return override;
+  return (await getEnvValue(env, "STORE_BACKEND")).toLowerCase() === "woocommerce" ? "woocommerce" : "shopify";
+}
+
+async function getWooConfig(env) {
+  const storeUrl = (await getEnvValue(env, "WOO_STORE_URL")).replace(/\/+$/, "");
+  const key = await getEnvValue(env, "WOO_CONSUMER_KEY");
+  const secret = await getEnvValue(env, "WOO_CONSUMER_SECRET");
+  if (!storeUrl || !key || !secret) throw new Error("Missing WOO_STORE_URL, WOO_CONSUMER_KEY or WOO_CONSUMER_SECRET");
+  return {
+    storeUrl,
+    key,
+    secret,
+    kaptaChannel: (await getEnvValue(env, "KAPTA_CHANNEL")) || WOO_DEFAULT_CHANNEL,
+    couponCode: (await getEnvValue(env, "WOO_COUPON_CODE")) || WOO_DEFAULT_COUPON,
+  };
+}
+
+async function wooApi(woo, path, options = {}) {
+  const auth = btoa(`${woo.key}:${woo.secret}`);
+  const response = await fetch(`${woo.storeUrl}/wp-json/wc/v3${path}`, {
+    method: options.method || "GET",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "User-Agent": "Aurela-Kapso-Order/1.0",
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const text = await response.text();
+  let body = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = { message: text.slice(0, 300) };
+  }
+  if (!response.ok) {
+    const error = new Error(`WooCommerce ${response.status}: ${body?.message || body?.code || "error"}`);
+    error.status = response.status;
+    error.code = body?.code;
+    throw error;
+  }
+  return body;
+}
+
+async function loadWooCatalog(woo) {
+  const cached = globalThis.__AURELA_WOO_CATALOG_CACHE;
+  if (cached?.storeUrl === woo.storeUrl && cached.expiresAt > Date.now()) return cached.products;
+
+  const products = [];
+  for (let page = 1; page <= WOO_MAX_CATALOG_PAGES; page += 1) {
+    const response = await fetch(`${woo.storeUrl}/products.json?limit=250&page=${page}`, {
+      headers: { Accept: "application/json", "User-Agent": "Aurela-Kapso-Order/1.0" },
+    });
+    if (!response.ok) {
+      if (page === 1) throw new Error(`Catalogo de la tienda no disponible (${response.status})`);
+      break;
+    }
+    const payload = await response.json();
+    const pageProducts = Array.isArray(payload?.products) ? payload.products : [];
+    products.push(...pageProducts);
+    if (pageProducts.length < 250) break;
+  }
+  globalThis.__AURELA_WOO_CATALOG_CACHE = { storeUrl: woo.storeUrl, expiresAt: Date.now() + WOO_CATALOG_TTL_MS, products };
+  return products;
+}
+
+function numericId(value) {
+  return String(value || "").match(/\d+/g)?.pop() || "";
+}
+
+function wooVariantText(variant) {
+  return normalizeSearchText([variant.title, variant.option1, variant.option2, variant.option3].filter(Boolean).join(" "));
+}
+
+function chooseWooVariant(product, item) {
+  const variants = product?.variants || [];
+  if (!variants.length) return null;
+  if (!item.variantTitle) return variants.find((v) => v.available) || variants[0];
+  const wanted = normalizeSearchText(item.variantTitle);
+  return variants.find((v) => normalizeSearchText(v.title) === wanted)
+    || variants.find((v) => wooVariantText(v).includes(wanted))
+    || variants.find((v) => wanted.split(" ").every((token) => wooVariantText(v).includes(token)))
+    || null;
+}
+
+function findWooProduct(catalog, item) {
+  const handles = extractHandleCandidates([item.productUrl, item.handle].filter(Boolean).join(" "));
+  for (const handle of handles) {
+    const key = slugifyHandle(safeDecode(handle));
+    const product = catalog.find((p) => slugifyHandle(p.handle) === key);
+    if (product) return product;
+  }
+  if (item.productTitle) {
+    const wanted = normalizeSearchText(item.productTitle);
+    const exact = catalog.find((p) => normalizeSearchText(p.title) === wanted);
+    if (exact) return exact;
+    const tokens = wanted.split(" ").filter((t) => t.length >= 3);
+    if (tokens.length) {
+      const scored = catalog
+        .map((p) => ({ p, score: tokens.filter((t) => normalizeSearchText(p.title).includes(t)).length }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score);
+      if (scored.length && scored[0].score >= Math.min(2, tokens.length)) return scored[0].p;
+    }
+  }
+  return null;
+}
+
+/** Lineas del pedido contra el catalogo: por ID de variante (de Shopify o de WooCommerce), handle o titulo. */
+function resolveWooLineItems(catalog, items) {
+  const lines = [];
+  const unresolved = [];
+  for (const item of items) {
+    let product = null;
+    let variant = null;
+    const wantedId = numericId(item.variantId);
+    if (wantedId) {
+      for (const p of catalog) {
+        const v = (p.variants || []).find((x) => String(x.id) === wantedId || String(x.woo_id) === wantedId);
+        if (v) {
+          product = p;
+          variant = v;
+          break;
+        }
+      }
+    }
+    if (!variant) {
+      product = findWooProduct(catalog, item);
+      variant = product ? chooseWooVariant(product, item) : null;
+    }
+    if (product && variant && variant.woo_id) {
+      lines.push({ item, product, variant, quantity: item.quantity, price: Number(variant.price) });
+    } else {
+      unresolved.push(item.productTitle || item.handle || item.variantTitle || item.variantId || "producto");
+    }
+  }
+  return { lines, unresolved };
+}
+
+/** Promos del bot (3x2 y 5x3 por producto) y envio, igual que computePricing de Shopify. */
+function computeWooPricing(lines) {
+  const unitsByProduct = new Map();
+  for (const line of lines) {
+    if (!Number.isFinite(line.price)) return null;
+    const list = unitsByProduct.get(line.product.id) || [];
+    for (let i = 0; i < line.quantity; i += 1) list.push(line.price);
+    unitsByProduct.set(line.product.id, list);
+  }
+  let subtotalBeforeDiscount = 0;
+  let discountTotal = 0;
+  for (const prices of unitsByProduct.values()) {
+    subtotalBeforeDiscount += prices.reduce((sum, price) => sum + price, 0);
+    const freeUnits = countFreeUnits(prices.length);
+    if (freeUnits > 0) {
+      discountTotal += [...prices].sort((a, b) => a - b).slice(0, freeUnits).reduce((sum, price) => sum + price, 0);
+    }
+  }
+  discountTotal = money(discountTotal);
+  const subtotalAfterDiscount = money(money(subtotalBeforeDiscount) - discountTotal);
+  const shippingFee = subtotalAfterDiscount > FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE_UNDER_THRESHOLD;
+  return { discountTotal, shippingFee, subtotalAfterDiscount, subtotalBeforeDiscount: money(subtotalBeforeDiscount) };
+}
+
+/** Reparte el descuento entre lineas en proporcion a su subtotal, en centimos (suman exacto). */
+function spreadWooDiscount(lines, discount) {
+  const cents = lines.map((line) => Math.round(line.price * line.quantity * 100));
+  const base = cents.reduce((a, b) => a + b, 0);
+  let left = Math.min(Math.round(discount * 100), base);
+  const shares = cents.map((c) => (base > 0 ? Math.floor((left * c) / base) : 0));
+  left -= shares.reduce((a, b) => a + b, 0);
+  for (let i = 0; left > 0 && shares.length; i = (i + 1) % shares.length) {
+    if (shares[i] < cents[i]) {
+      shares[i] += 1;
+      left -= 1;
+    }
+  }
+  return lines.map((line, i) => ({ subtotal: cents[i] / 100, total: (cents[i] - shares[i]) / 100 }));
+}
+
+function titleCasePlace(value) {
+  const small = new Set(["de", "del", "la", "las", "los", "y", "el"]);
+  return String(value || "").trim().toLowerCase().split(/\s+/).filter(Boolean)
+    .map((w, i) => (i > 0 && small.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
+}
+
+/** Departamento, provincia y distrito: de check-coverage (normalized) o de lo que dio el cliente. */
+function wooLocation(input) {
+  const customer = input.customer || {};
+  const normalized = input.coverage?.normalized || {};
+  const region = normalizeSearchText(normalized.region || customer.region || customer.departamento || "");
+  const province = normalizeSearchText(normalized.province || customer.province || customer.provincia || "");
+  const districtRaw = String(customer.district || customer.distrito || normalized.district || "").trim();
+  let state = "";
+  if (region === "callao" || province === "callao") state = "CAL";
+  else if (region === "lima" || (!region && province === "lima")) state = province && province !== "lima" ? "LIM" : "LMA";
+  else state = WOO_STATE_CODES[region] || "";
+  const district = /[A-ZÁÉÍÓÚÑ]/.test(districtRaw) ? districtRaw : titleCasePlace(districtRaw);
+  return { state, district, province, region };
+}
+
+function wooMeta(input, woo, discountTotal, extraTags = []) {
+  const meta = [];
+  const add = (key, value) => {
+    const v = String(value ?? "").trim();
+    if (v) meta.push({ key, value: v.slice(0, 250) });
+  };
+  add("kapta_channel", woo.kaptaChannel);
+  for (const attr of buildCustomAttributes(input, null)) add(attr.key, attr.value);
+  add("kapso_tags", [...buildTags(input), ...extraTags].join(","));
+  const ref = input.ctwaReferral;
+  if (ref?.source_id) {
+    // Atribucion para Kapta (pedido sin checkout): los utm visibles, con el anuncio de origen.
+    add("utm_id", ref.source_id);
+    add("utm_source", "facebook");
+    add("utm_medium", "ctwa");
+  }
+  if (discountTotal > 0) add("cod_core_cupon", woo.couponCode);
+  return meta;
+}
+
+async function handleWooOrder(input, env) {
+  const woo = await getWooConfig(env);
+  const dryRun = Boolean(input.dryRun || input.dry_run);
+  input.ctwaReferral = await fetchCtwaReferral(env, input);
+
+  const catalog = await loadWooCatalog(woo);
+  const { lines, unresolved } = resolveWooLineItems(catalog, normalizeLineItems(input.lineItems || input.items || []));
+  if (!lines.length || unresolved.length) {
+    return json({ ok: false, reason: "products_not_found", unresolved, message: "No pude ubicar todos los productos en la tienda." });
+  }
+
+  const quote = input.quote || {};
+  const computed = computeWooPricing(lines);
+  let discountTotal = computed ? computed.discountTotal : Number(quote.discountTotal ?? quote.discount_total ?? 0);
+  let shippingFee = computed ? computed.shippingFee : Number(quote.shippingFee ?? quote.shipping_fee ?? 0);
+  const extraDiscount = Number(quote.extraDiscountTotal ?? quote.extra_discount_total ?? 0);
+  if (Number.isFinite(extraDiscount) && extraDiscount > 0 && computed) {
+    discountTotal = money(discountTotal + Math.min(extraDiscount, money(computed.subtotalBeforeDiscount * 0.15)));
+    shippingFee = money(computed.subtotalBeforeDiscount - discountTotal) > FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE_UNDER_THRESHOLD;
+  }
+
+  const outOfStockVariants = lines
+    .filter((line) => line.variant.available === false)
+    .map((line) => ({ id: String(line.variant.id), title: [line.product.title, line.variant.title].filter((t) => t && t !== "Default Title").join(" - ") }));
+  const stockToValidate = outOfStockVariants.length > 0
+    || Boolean(input.stockPorValidar || input.stock_por_validar || input.stockValidationRequired || input.stock_validation_required);
+
+  const customer = input.customer || {};
+  const address = buildAddress(customer, input);
+  const location = wooLocation(input);
+  const email = normalizeEmail(customer.email || input.email);
+  const totals = spreadWooDiscount(lines, discountTotal);
+  const gifts = wooGiftLines(catalog, lines);
+  const specialNote = sanitizeNoteText(input.specialDeliveryNote || input.special_delivery_note);
+
+  const order = {
+    status: "cod-pending",
+    payment_method: "cod",
+    payment_method_title: "Pago contra entrega",
+    set_paid: false,
+    billing: {
+      first_name: address.firstName,
+      last_name: address.lastName,
+      phone: normalizePhone(customer.phone || input.phone || address.phone),
+      country: "PE",
+      state: location.state,
+      city: location.district,
+      address_1: address.address1,
+      address_2: address.address2,
+      ...(email ? { email } : {}),
+    },
+    line_items: lines.map((line, i) => ({
+      product_id: line.product.woo_id,
+      ...(line.variant.woo_id !== line.product.woo_id ? { variation_id: line.variant.woo_id } : {}),
+      quantity: line.quantity,
+      subtotal: totals[i].subtotal.toFixed(2),
+      total: totals[i].total.toFixed(2),
+    })).concat(gifts.found.map((gift) => ({
+      product_id: gift.product.woo_id,
+      ...(gift.variant.woo_id !== gift.product.woo_id ? { variation_id: gift.variant.woo_id } : {}),
+      quantity: gift.quantity,
+      subtotal: "0.00",
+      total: "0.00",
+    }))),
+    shipping_lines: [shippingFee > 0
+      ? { method_id: "flat_rate", method_title: "Envio", total: money(shippingFee).toFixed(2) }
+      : { method_id: "free_shipping", method_title: "Envío gratis", total: "0.00" }],
+    customer_note: specialNote ? `Fecha/hora solicitada: ${specialNote}` : "",
+    meta_data: wooMeta(input, woo, discountTotal, gifts.tags),
+  };
+  // La nota con los productos ya resueltos (nombre y talla) y el total calculado, aunque el agente solo haya mandado
+  // el handle o el ID de la variante.
+  const orderTotal = money((computed ? computed.subtotalBeforeDiscount : lines.reduce((s, l) => s + l.price * l.quantity, 0)) - discountTotal + shippingFee);
+  const noteInput = {
+    ...input,
+    items: lines.map((line) => ({
+      quantity: line.quantity,
+      productTitle: [line.product.title, line.variant.title !== "Default Title" ? line.variant.title : ""].filter(Boolean).join(" - "),
+    })),
+    quote: { ...quote, total: quote.total || orderTotal },
+  };
+  const note = buildNote(noteInput, null)
+    + (gifts.found.length ? `\nRegalo(s): ${summaryLine(gifts.found.map((gift) => ({ quantity: gift.quantity, productTitle: wooLineTitle(gift) })))}` : "")
+    + (gifts.missing.length ? `\nREGALO POR AGREGAR A MANO (no esta en la tienda): ${gifts.missing.join("; ")}` : "")
+    + (stockToValidate
+      ? `\nSTOCK POR VALIDAR: ${outOfStockVariants.map((v) => v.title || v.id).join("; ") || "lo pidio el agente"}`
+      : "");
+
+  if (dryRun) {
+    return json({
+      ok: true,
+      dryRun: true,
+      backend: "woocommerce",
+      stockToValidate,
+      outOfStockVariants,
+      location,
+      pricing: { discountTotal, shippingFee, subtotal: computed?.subtotalBeforeDiscount ?? null },
+      orderPreview: order,
+      internalNote: note,
+    });
+  }
+
+  let created;
+  try {
+    created = await wooApi(woo, "/orders", { method: "POST", body: order });
+  } catch (error) {
+    return json({ ok: false, reason: "woocommerce_error", status: error.status || null, error: safeError(error) });
+  }
+  try {
+    await wooApi(woo, `/orders/${created.id}/notes`, { method: "POST", body: { note, customer_note: false } });
+  } catch {
+    // La nota interna es un extra: el pedido ya quedo creado.
+  }
+
+  return json({
+    ok: true,
+    backend: "woocommerce",
+    stage: "orden creada",
+    conversionStatus: "confirmed",
+    conversionType: "contraentrega",
+    conversionTotal: Number(created.total ?? quote.total ?? 0),
+    stockToValidate,
+    outOfStockVariants,
+    customerLookup: { searched: false, status: "skipped", reason: "woocommerce_guest" },
+    order: {
+      id: created.id,
+      name: `#${created.number}`,
+      number: created.number,
+      legacyResourceId: String(created.id),
+      total: created.total,
+      statusUrl: null,
+      customer: null,
+    },
+    customerMessage: stockToValidate
+      ? "Listo, registre tu pedido. Queda sujeto a confirmacion de stock; nuestro equipo lo valida y te confirma por aqui."
+      : "Listo, tu pedido quedo registrado. Nuestro equipo coordinara el despacho por aqui.",
+  });
 }
 
 const ORDER_CREATE_MUTATION = `#graphql
@@ -969,6 +1381,33 @@ const GIFT_LADDERS = [
     ],
   },
 ];
+// Pedido en WooCommerce: las mismas escaleras, con los regalos a S/ 0. El catalogo publico de la tienda trae los IDs
+// de variante de Shopify (cod-core), asi que los triggers y los regalos sirven igual. Un regalo que no esta en el
+// catalogo (borrador u oculto) no frena el pedido: va en la nota para que el equipo lo agregue a mano.
+function wooGiftLines(catalog, lines) {
+  const gifts = giftLineItems(lines.map((line) => ({ variantId: `gid://shopify/ProductVariant/${line.variant.id}`, quantity: line.quantity })));
+  const found = [];
+  const missing = [];
+  for (const gift of gifts.items) {
+    const wanted = numericId(gift.variantId);
+    let match = null;
+    for (const product of catalog) {
+      const variant = (product.variants || []).find((v) => String(v.id) === wanted);
+      if (variant && variant.woo_id) {
+        match = { product, variant, quantity: gift.quantity };
+        break;
+      }
+    }
+    if (match) found.push(match);
+    else missing.push(`${gift.quantity} x variante ${wanted}`);
+  }
+  return { found, missing, tags: gifts.tags };
+}
+
+function wooLineTitle(line) {
+  return [line.product.title, line.variant.title !== "Default Title" ? line.variant.title : ""].filter(Boolean).join(" - ");
+}
+
 function giftLineItems(lineItems) {
   const items = [];
   const tags = [];
@@ -1177,6 +1616,12 @@ globalThis.__aurelaCreateShopifyOrder = {
   buildAddress,
   buildNote,
   buildOrderInput,
+  computeWooPricing,
+  getStoreBackend,
+  handleWooOrder,
+  resolveWooLineItems,
+  spreadWooDiscount,
+  wooLocation,
   computePricing,
   countFreeUnits,
   fetchCtwaReferral,

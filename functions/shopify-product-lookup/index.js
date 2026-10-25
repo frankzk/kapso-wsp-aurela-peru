@@ -388,14 +388,22 @@ async function handleRequest(request, env = globalThis) {
       }
     }
 
-    if (!product && config.token) {
+    // Con aurela.pe en WooCommerce el respaldo de la API de Shopify queda apagado: encontraria productos que la
+    // tienda no vende (y que create-shopify-order no puede pedir), y cuando Shopify cierre solo fallaria.
+    let adminChecked = null;
+    const shopifyAdmin = async () => {
+      if (adminChecked === null) adminChecked = Boolean(config.token) && !(await publicCatalogIsWoo(config, env));
+      return adminChecked;
+    };
+
+    if (!product && (await shopifyAdmin())) {
       for (const handle of handles) {
         product = await getProductByHandle(config, handle);
         if (product) break;
       }
     }
 
-    if (!product && queryText && config.token) {
+    if (!product && queryText && (await shopifyAdmin())) {
       const products = await searchProducts(config, queryText, handles);
       product = products[0] || null;
     }
@@ -412,7 +420,7 @@ async function handleRequest(request, env = globalThis) {
         const mappedHandle = await getAdMappedHandle(env, referral.source_id);
         if (mappedHandle) {
           product = await getPublicProductByHandle(config, mappedHandle);
-          if (!product && config.token) product = await getProductByHandle(config, mappedHandle);
+          if (!product && (await shopifyAdmin())) product = await getProductByHandle(config, mappedHandle);
         }
 
         // 2) AUTO-MAPEO en tiempo real: si el anuncio no esta mapeado, extraer el
@@ -429,7 +437,7 @@ async function handleRequest(request, env = globalThis) {
               const s = searchCatalogProducts(catalog, cand, []);
               if (s.product && !s.ambiguous) { product = s.product; autoLearned = true; break; }
             }
-            if (!product && config.token) {
+            if (!product && (await shopifyAdmin())) {
               for (const cand of candidates) {
                 const ps = await searchProducts(config, cand, []);
                 if (ps.length === 1) { product = ps[0]; autoLearned = true; break; }
@@ -449,7 +457,7 @@ async function handleRequest(request, env = globalThis) {
             const catalog = await loadPublicCatalog(config, env);
             const adSearch = searchCatalogProducts(catalog, adText, []);
             product = adSearch.product || null;
-            if (!product && config.token) {
+            if (!product && (await shopifyAdmin())) {
               const adProducts = await searchProducts(config, adText, []);
               product = adProducts[0] || null;
             }
@@ -857,8 +865,18 @@ async function getPublicProductByHandle(config, handle) {
   return null;
 }
 
-const CATALOG_KV_KEY = "catalog:normalized:v2";
+const CATALOG_KV_KEY = "catalog:normalized:v3"; // v3: con el campo woo (tienda WooCommerce)
 const CATALOG_KV_TTL_S = 30 * 60; // 30 min (mas largo que el cache en memoria)
+
+// ¿El catalogo publico es el de la tienda WooCommerce? (cod-core agrega woo_id a cada producto.)
+async function publicCatalogIsWoo(config, env) {
+  try {
+    const catalog = await loadPublicCatalog(config, env);
+    return catalog.some((product) => product && product.woo);
+  } catch {
+    return false;
+  }
+}
 
 async function loadPublicCatalog(config, env) {
   const now = Date.now();
@@ -1444,6 +1462,8 @@ function publicProductToNormalized(product, publicShopDomain, options = {}) {
 
   return {
     __source: options.source || "public",
+    // La tienda WooCommerce (cod-core) responde /products.json como Shopify y agrega woo_id.
+    woo: Boolean(product.woo_id),
     id: toShopifyGid("Product", product.id),
     handle: product.handle,
     title: product.title || product.handle,

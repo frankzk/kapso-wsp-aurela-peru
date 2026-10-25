@@ -43,6 +43,7 @@ async function handleRequest(request, env = {}) {
     const input = await readJson(request);
     const config = await getConfig(env);
     const root = isPlainObject(input.input) ? input.input : input;
+    if (root.exportVideos === true) return json(await exportVideos(config, root));
     const queryText = collectInputText(input);
     const contextText = collectContextText(input);
     const requestText = [queryText, contextText].filter(Boolean).join(" ").trim();
@@ -674,6 +675,16 @@ async function fetchProductVideo(config, product) {
     errors: [],
   };
 
+  // 1) El video del catalogo publico (/products/<handle>.js, "media" con media_type "video"): lo publica Shopify para
+  // los de la galeria y la tienda WooCommerce (cod-core) para todos los que se pasaron, asi que sigue cuando Shopify
+  // cierre. Sin llamar a la API de administracion.
+  const fromCatalog = publicMediaVideo(product);
+  if (fromCatalog) {
+    debug.source = "public.media";
+    debug.urlPicked = true;
+    return { item: videoItem(product, fromCatalog.url, fromCatalog.mimeType, "public.media"), debug };
+  }
+
   if (!config.adminToken || !productGid) return { item: null, debug };
 
   try {
@@ -803,6 +814,79 @@ async function fetchMetafieldVideo(config, productGid) {
   return result;
 }
 
+// Video de "media" en el formato de la Ajax API de Shopify ({media_type: "video", sources: [{url, mime_type, format,
+// height}]}), con la misma eleccion que la API de administracion: MP4, la version mas chica.
+function publicMediaVideo(product) {
+  for (const media of Array.isArray(product?.media) ? product.media : []) {
+    if (media?.media_type !== "video") continue;
+    const sources = (Array.isArray(media.sources) ? media.sources : []).map((source) => ({
+      url: source?.url,
+      mimeType: source?.mime_type || source?.mimeType,
+      format: source?.format,
+      height: source?.height,
+    }));
+    const src = pickVideoSource(sources);
+    const url = src ? normalizeMediaUrl(src.url) : "";
+    if (url) return { url, mimeType: src.mimeType || "video/mp4" };
+  }
+  return null;
+}
+
+// Exporta de Shopify (API de administracion) el video de cada producto activo, en el formato de config/videos.json
+// de la tienda WooCommerce: { productos: { <handle>: { url, alto, fuente } } }. Se corre a mano desde la pestana Test
+// de Kapso con {"input": {"exportVideos": true}} antes de que Shopify cierre; "after" sigue desde una pagina.
+async function exportVideos(config, input) {
+  if (!config.adminToken) return { ok: false, reason: "missing_admin_token" };
+  const query = `#graphql
+    query ExportVideos($after: String, $ns: String!, $key: String!) {
+      products(first: 50, after: $after, query: "status:active") {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          handle
+          media(first: 20) { nodes { __typename ... on Video { sources { url mimeType format height width } } } }
+          metafield(namespace: $ns, key: $key) {
+            reference {
+              __typename
+              ... on Video { sources { url mimeType format height width } }
+              ... on GenericFile { url mimeType }
+            }
+          }
+        }
+      }
+    }`;
+  const productos = {};
+  let after = input.after || null;
+  let pages = 0;
+  let hasNext = true;
+  while (hasNext && pages < 20) {
+    const data = await shopifyAdminGraphql(config, query, { after, ns: VIDEO_METAFIELD_NAMESPACE, key: VIDEO_METAFIELD_KEY });
+    const page = data?.products;
+    for (const node of page?.nodes || []) {
+      let picked = null;
+      let fuente = null;
+      for (const media of node.media?.nodes || []) {
+        const src = pickVideoSource(media?.sources);
+        if (src) { picked = src; fuente = "galeria"; break; }
+      }
+      const ref = node.metafield?.reference;
+      if (!picked && ref?.__typename === "Video") {
+        const src = pickVideoSource(ref.sources);
+        if (src) { picked = src; fuente = "custom.video"; }
+      }
+      if (!picked && ref?.__typename === "GenericFile" && ref.url) {
+        picked = { url: ref.url, height: null };
+        fuente = "custom.video";
+      }
+      const url = picked ? normalizeMediaUrl(picked.url) : "";
+      if (url) productos[node.handle] = { url, alto: Number(picked.height) || null, fuente };
+    }
+    hasNext = Boolean(page?.pageInfo?.hasNextPage);
+    after = page?.pageInfo?.endCursor || null;
+    pages += 1;
+  }
+  return { ok: true, count: Object.keys(productos).length, complete: !hasNext, nextAfter: hasNext ? after : null, productos };
+}
+
 function pickVideoSource(sources) {
   const valid = (Array.isArray(sources) ? sources : []).filter((source) => source && source.url);
   const mp4 = valid.filter((source) => /mp4/i.test(source.mimeType || "") || /mp4/i.test(source.format || "") || /\.mp4(\?|$)/i.test(source.url || ""));
@@ -888,5 +972,7 @@ globalThis.__aurelaProductMediaLookup = {
   handleRequest,
   handler,
   pickVideoSource,
+  publicMediaVideo,
+  exportVideos,
   videoItem,
 };

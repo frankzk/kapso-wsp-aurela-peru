@@ -19,7 +19,7 @@ están en ningún commit.
 | Función | Cambio |
 |---|---|
 | `shopify-product-lookup` | Lee `https://aurela.pe/products.json` y `/products/<handle>.js`, y la tienda nueva responde esas direcciones con el mismo formato y los mismos IDs de Shopify (plugin `cod-core`). **Cambio:** si el catálogo público es el de WooCommerce (trae `woo_id`), no usa el respaldo de la API de administración de Shopify: encontraría productos que la tienda no vende y que el pedido no puede crear, y cuando Shopify cierre solo fallaría. Sin variables nuevas. La caché del catálogo en KV pasa a `catalog:normalized:v3` |
-| `product-media-lookup` | **Nada** para las fotos (mismo catálogo público). WordPress ya deja la foto grande de BeeWax (8 MB en Shopify) en 3,5 MB al importarla; las demás pesan menos de 5 MB (medido el 25-10 en las 3.504 fotos activas). Los videos (metacampo `custom.video` de la API de administración de Shopify) siguen mientras Shopify responda; cuando cierre, el bot avisa que no hay video y manda las fotos. Para no perderlos hay que pasarlos a la tienda antes del cierre (pendiente) |
+| `product-media-lookup` | **Nada** para las fotos (mismo catálogo público). WordPress ya deja la foto grande de BeeWax (8 MB en Shopify) en 3,5 MB al importarla; las demás pesan menos de 5 MB (medido el 25-10 en las 3.504 fotos activas). **Videos:** primero el del catálogo público (`media` de `/products/<handle>.js`, como lo publica Shopify para la galería y cod-core para los que se pasaron a la tienda), sin la API de administración; si no hay, la API (galería y metacampo `custom.video`) mientras Shopify responda. Para pasarlos a la tienda: modo `exportVideos` (abajo) |
 | `create-shopify-order` | Con `STORE_BACKEND=woocommerce` crea el pedido en WooCommerce por su API REST (ver abajo). Sin esa variable sigue en Shopify |
 | `campaign-report` | Con `STORE_BACKEND=woocommerce` lee los pedidos de WooCommerce por la API REST (los del bot llevan `source=whatsapp-bot` y `ctwa_ad_id` como metadatos, igual que en Shopify) y, si sigue `SHOPIFY_ADMIN_ACCESS_TOKEN`, suma los de Shopify de antes de la apertura; si Shopify ya no responde, el reporte sale igual con un aviso. Sin esa variable sigue en Shopify |
 | `quote-order`, `check-coverage`, `notify-team`, `send-buttons` | Nada |
@@ -75,6 +75,15 @@ borradores del checkout.
    `STORE_BACKEND=woocommerce` en `create-shopify-order` y en `campaign-report`. Probar `create-shopify-order` solo con
    `dryRun` (pestaña Test): con Kapta ya conectado, un pedido real de prueba le llegaría.
 4. Volver atrás (si se vuelve a Shopify): `STORE_BACKEND=shopify`.
+
+## Pasar los videos a la tienda (antes de que Shopify cierre)
+
+1. Desplegar `product-media-lookup` de esta rama.
+2. En Kapso → `product-media-lookup` → **Test**: `{"input": {"exportVideos": true}}`. Devuelve
+   `{"ok": true, "complete": true, "count": N, "productos": {...}}` con el video de cada producto activo (galería o
+   `custom.video`, la versión MP4 más chica). Si `complete` es `false`, repetir con `"after": "<nextAfter>"`.
+3. Copiar `productos` a `config/videos.json` del repo de la tienda (`frankzk/aurelape-woo`): `scripts/importar-videos.php`
+   (lo corre `setup.sh` en cada despliegue) baja cada video una sola vez y la tienda lo publica en `/products/<handle>.js`.
 
 ## Pruebas
 

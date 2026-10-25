@@ -1,5 +1,9 @@
 # Paso del bot de Shopify a WooCommerce (aurela.pe, 27-10-2026)
 
+> **No desplegar desde esta rama** (25-10-2026): salió del código de julio y no tiene los arreglos de octubre
+> (`claude/clever-bohr-sndj1m`). Desplegar desde **`claude/bot-woocommerce-completo`**, que junta octubre y lo de
+> WooCommerce de esta rama.
+
 Shopify cierra la tienda de Aurela el 28-10-2026 a las 00:00 UTC (martes 27 a las 19:00 de Lima). Ese día aurela.pe
 pasa a la tienda WooCommerce. Este documento dice qué cambia en el bot y cómo se pasa.
 

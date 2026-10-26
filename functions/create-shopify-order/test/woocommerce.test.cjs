@@ -60,6 +60,14 @@ const call = async (input, e = env) => (await api.handleRequest(new Request("htt
   assert.match(api.wooQuoteMismatchNote({ total: 116.1 }, 129), /OJO PRECIO: el bot le cotizo S\/ 116\.10 y el pedido suma S\/ 129\.00/);
   assert.strictEqual(api.wooQuoteMismatchNote({ total: 158 }, 158), "", "mismo total: sin aviso");
   assert.strictEqual(api.wooQuoteMismatchNote({}, 79), "", "sin cotizacion: sin aviso");
+  // Celular: el de WhatsApp o el que dio el cliente; el ID de un usuario sin numero ("PE.xxx") no sirve.
+  assert.strictEqual(api.wooCustomerPhone({ customer: { phone: "51987654321" } }, {}), "+51987654321");
+  assert.strictEqual(api.wooCustomerPhone({ customer: { phone: "987 654 321" } }, {}), "+51987654321");
+  assert.strictEqual(api.wooCustomerPhone({ customer: { phone: "PE.2139879713270788" } }, {}), "");
+  assert.strictEqual(api.wooCustomerPhone({ customer: {} }, {}), "");
+  assert.strictEqual(api.wooCustomerPhone({ customer: { phone: "PE.2139879713270788" }, phone: "912345678" }, {}), "+51912345678");
+  const sinCelular = await call({ dryRun: true, items: [{ quantity: 1, handle: "rodillera-x-pro" }], customer: { name: "Soli", phone: "PE.1571967204683218", address: "Calle 1 123", district: "Cayma", reference: "x" }, coverage: { normalized: { district: "cayma", province: "arequipa", region: "arequipa" } } });
+  assert.deepStrictEqual([sinCelular.ok, sinCelular.reason], [false, "missing_phone"]);
 
   // Reparto del descuento: suma exacta.
   const t = api.spreadWooDiscount([{ price: 119, quantity: 3 }, { price: 35, quantity: 1 }], 119);

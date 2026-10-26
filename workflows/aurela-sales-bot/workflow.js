@@ -123,7 +123,7 @@ Regla de experiencia del cliente:
 - Si el cliente ya eligio promo/cantidad y tienes precio real, no pidas confirmacion intermedia; actualiza el carrito.
 - Solo habla de problema tecnico si create_shopify_order falla despues de la confirmacion final del cliente. En ese caso deriva a humano sin prometer que el pedido fue creado.
 - Al agregar un producto a un pedido existente, no vuelvas a explicar que verificaste cobertura. Solo actualiza la lista y el total.
-- El telefono de contacto es el numero de WhatsApp del cliente: no lo pidas a ciegas, solo confirmalo ("¿Coordinamos la entrega a este mismo numero?"). Pide otro solo si el cliente indica uno distinto.
+- El telefono de contacto es el numero de WhatsApp del cliente: no lo pidas a ciegas, solo confirmalo ("¿Coordinamos la entrega a este mismo numero?"). Pide otro solo si el cliente indica uno distinto. EXCEPCION (REGLA DURA): si en el contexto el cliente NO tiene numero (phone_number / wa_id vacio: escribe con usuario de WhatsApp, sin numero visible), PIDELE su celular (9 digitos, empieza con 9) junto con los demas datos y pasalo en customer.phone. Sin celular NO crees el pedido.
 - Formato recomendado al actualizar carrito:
 "Listo, lo agrego a tu pedido.
 
@@ -339,7 +339,7 @@ Flujo de venta:
    - Segun el shippingMode que devuelve check_coverage, sigue UNA de estas dos rutas:
 
    A) CONTRAENTREGA (shippingMode="contraentrega"):
-      - En UN solo mensaje pide los datos faltantes: nombre completo, direccion exacta y referencia (la referencia es obligatoria en contraentrega). El telefono lo tomas del numero de WhatsApp: solo confirmalo ("¿Coordinamos la entrega a este mismo numero?"), no lo pidas a ciegas.
+      - En UN solo mensaje pide los datos faltantes: nombre completo, direccion exacta y referencia (la referencia es obligatoria en contraentrega). El telefono lo tomas del numero de WhatsApp: solo confirmalo ("¿Coordinamos la entrega a este mismo numero?"), no lo pidas a ciegas. Si el cliente no tiene numero en el contexto (usuario de WhatsApp sin numero), agrega el *celular* a la lista de datos que pides en ese mismo mensaje.
       - NO pidas DNI ni voucher.
       - Luego pasa al cierre con resumen corto (paso 11) y, tras la confirmacion del cliente (ver "CONFIRMACION DEL PEDIDO": un "si", el boton, o una señal de compra fuerte), crea la orden con create_shopify_order.
 
@@ -661,7 +661,7 @@ PEDIDO YA REGISTRADO (post-venta: el cliente YA tiene un pedido creado — stage
       },
       {
         "name": "create_shopify_order",
-        "description": "Create a pending Shopify order for confirmed cash-on-delivery orders only. Do not use for agency/voucher flows.",
+        "description": "Create a pending Shopify order for confirmed cash-on-delivery orders only. Do not use for agency/voucher flows. Always pass customer.phone with the customer's 9-digit mobile (the WhatsApp number, or the one the customer gave if the contact has no number). If it returns reason=missing_phone, ask the customer for their mobile number (9 digits, starts with 9) and call it again; never say the order was created.",
         "function_name": "Create Shopify Order",
         "input_schema": {
           "type": "object",

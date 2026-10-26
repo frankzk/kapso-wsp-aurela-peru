@@ -415,6 +415,43 @@ function wooMeta(input, woo, discountTotal, extraTags = []) {
   return meta;
 }
 
+// Celular peruano real para el pedido de WooCommerce (Kapta llama y escribe a ese numero). Un contacto que escribe con
+// usuario de WhatsApp no trae numero, y su ID ("PE.2139...") no es un telefono: sin un 9XXXXXXXX no se crea el pedido.
+function wooCustomerPhone(input, address) {
+  const customer = input.customer || {};
+  for (const raw of [customer.phone, input.phone, address.phone, input.customerPhone]) {
+    const text = String(raw || "").trim();
+    if (!text || /[a-z]/i.test(text)) continue;
+    const digits = phoneDigits(text);
+    if (/^9\d{8}$/.test(digits)) return `+51${digits}`;
+    if (/^519\d{8}$/.test(digits)) return `+${digits}`;
+  }
+  return "";
+}
+
+// Respaldo: el numero de WhatsApp de la conversacion (el agente a veces no manda customer.phone). Un contacto que
+// escribe con usuario de WhatsApp no tiene numero y aqui no aparece.
+async function wooConversationPhone(env, input) {
+  try {
+    const { apiKey, apiBase } = getKapsoConfig(env);
+    const conversationId = input.conversationId || input.conversation_id;
+    const phoneNumberId =
+      input.phoneNumberId || input.phone_number_id || input.whatsappPhoneNumberId || input.whatsapp_phone_number_id || DEFAULT_PHONE_NUMBER_ID;
+    if (!apiKey || !conversationId) return "";
+    const url = `${apiBase}/meta/whatsapp/v24.0/${encodeURIComponent(phoneNumberId)}/messages?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=5`;
+    const response = await fetch(url, { headers: { "X-API-Key": apiKey, "Content-Type": "application/json" } });
+    if (!response.ok) return "";
+    const payload = await response.json();
+    for (const message of payload?.data || []) {
+      const value = message?.kapso?.phone_number || message?.from || "";
+      if (value && !/[a-z]/i.test(String(value))) return String(value);
+    }
+  } catch {
+    // Sin respaldo: se pide el celular al cliente.
+  }
+  return "";
+}
+
 // El pedido de WooCommerce se cobra con los precios de la tienda (y las promos 3x2/5x3). Si el bot le prometio al
 // cliente otro total (p. ej. el precio de un anuncio), la nota lo dice para que el equipo lo confirme antes de cobrar:
 // en Shopify se veia en "Total cotizado", que la nota corta de WooCommerce ya no trae.
@@ -453,6 +490,15 @@ async function handleWooOrder(input, env) {
 
   const customer = input.customer || {};
   const address = buildAddress(customer, input);
+  const phone = wooCustomerPhone(input, address)
+    || wooCustomerPhone({ customer: { phone: await wooConversationPhone(env, input) } }, {});
+  if (!phone) {
+    return json({
+      ok: false,
+      reason: "missing_phone",
+      message: "Falta el celular del cliente (9 digitos, empieza con 9). Pideselo y vuelve a llamar con customer.phone.",
+    });
+  }
   const location = wooLocation(input);
   const email = normalizeEmail(customer.email || input.email);
   const totals = spreadWooDiscount(lines, discountTotal);
@@ -467,7 +513,7 @@ async function handleWooOrder(input, env) {
     billing: {
       first_name: address.firstName,
       last_name: address.lastName,
-      phone: normalizePhone(customer.phone || input.phone || address.phone),
+      phone,
       country: "PE",
       state: location.state,
       city: location.district,
@@ -1654,6 +1700,7 @@ globalThis.__aurelaCreateShopifyOrder = {
   spreadWooDiscount,
   wooLocation,
   wooQuoteMismatchNote,
+  wooCustomerPhone,
   computePricing,
   countFreeUnits,
   fetchCtwaReferral,

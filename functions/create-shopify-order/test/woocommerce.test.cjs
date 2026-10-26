@@ -56,6 +56,10 @@ const call = async (input, e = env) => (await api.handleRequest(new Request("htt
   assert.strictEqual(api.wooLocation({ coverage: { region: "junin", district: "huancayo", province: "junin" }, customer: { district: "El Tambo", region: "Junin" } }).state, "JUN");
   assert.strictEqual(api.wooLocation({ customer: { district: "Cercado", region: "Arequipa", province: "Arequipa" } }).state, "ARE");
   assert.strictEqual(api.wooLocation({ customer: { district: "Distrito Desconocido" } }).state, "", "sin datos: vacio, no inventa");
+  // Precio prometido por el bot distinto del que cobra la tienda (caso real 24-10: Fat-Burn a S/ 116.10 de anuncio).
+  assert.match(api.wooQuoteMismatchNote({ total: 116.1 }, 129), /OJO PRECIO: el bot le cotizo S\/ 116\.10 y el pedido suma S\/ 129\.00/);
+  assert.strictEqual(api.wooQuoteMismatchNote({ total: 158 }, 158), "", "mismo total: sin aviso");
+  assert.strictEqual(api.wooQuoteMismatchNote({}, 79), "", "sin cotizacion: sin aviso");
 
   // Reparto del descuento: suma exacta.
   const t = api.spreadWooDiscount([{ price: 119, quantity: 3 }, { price: 35, quantity: 1 }], 119);

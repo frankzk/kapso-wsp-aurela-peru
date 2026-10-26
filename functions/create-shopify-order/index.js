@@ -415,6 +415,15 @@ function wooMeta(input, woo, discountTotal, extraTags = []) {
   return meta;
 }
 
+// El pedido de WooCommerce se cobra con los precios de la tienda (y las promos 3x2/5x3). Si el bot le prometio al
+// cliente otro total (p. ej. el precio de un anuncio), la nota lo dice para que el equipo lo confirme antes de cobrar:
+// en Shopify se veia en "Total cotizado", que la nota corta de WooCommerce ya no trae.
+function wooQuoteMismatchNote(quote, orderTotal) {
+  const quoted = Number(quote?.total);
+  if (!Number.isFinite(quoted) || quoted <= 0 || Math.abs(quoted - orderTotal) < 0.5) return "";
+  return `\nOJO PRECIO: el bot le cotizo S/ ${money(quoted).toFixed(2)} y el pedido suma S/ ${money(orderTotal).toFixed(2)}. Confirmar con el cliente antes de cobrar.`;
+}
+
 async function handleWooOrder(input, env) {
   const woo = await getWooConfig(env);
   const dryRun = Boolean(input.dryRun || input.dry_run);
@@ -501,7 +510,8 @@ async function handleWooOrder(input, env) {
     + (gifts.missing.length ? `\nREGALO POR AGREGAR A MANO (no esta en la tienda): ${gifts.missing.join("; ")}` : "")
     + (stockToValidate
       ? `\nSTOCK POR VALIDAR: ${outOfStockVariants.map((v) => v.title || v.id).join("; ") || "lo pidio el agente"}`
-      : "");
+      : "")
+    + wooQuoteMismatchNote(quote, orderTotal);
 
   if (dryRun) {
     return json({
@@ -1643,6 +1653,7 @@ globalThis.__aurelaCreateShopifyOrder = {
   resolveWooLineItems,
   spreadWooDiscount,
   wooLocation,
+  wooQuoteMismatchNote,
   computePricing,
   countFreeUnits,
   fetchCtwaReferral,

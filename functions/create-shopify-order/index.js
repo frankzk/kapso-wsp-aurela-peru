@@ -697,7 +697,7 @@ async function fetchCtwaReferral(env, input) {
       input.phoneNumberId || input.phone_number_id || input.whatsappPhoneNumberId || input.whatsapp_phone_number_id || DEFAULT_PHONE_NUMBER_ID;
     if (!apiKey || !conversationId || !phoneNumberId) return null;
 
-    let url = `${apiBase}/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/messages?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=100`;
+    let url = `${apiBase}/meta/whatsapp/v24.0/${encodeURIComponent(phoneNumberId)}/messages?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=100`;
     for (let page = 0; page < CTWA_MAX_PAGES && url; page += 1) {
       const response = await fetch(url, { headers: { "X-API-Key": apiKey, "Content-Type": "application/json" } });
       if (!response.ok) return null;
@@ -709,7 +709,7 @@ async function fetchCtwaReferral(env, input) {
       }
       const nextCursor = payload?.paging?.cursors?.after || payload?.paging?.next;
       if (!nextCursor || payload?.paging?.next === null) break;
-      url = `${apiBase}/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/messages?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=100&after=${encodeURIComponent(nextCursor)}`;
+      url = `${apiBase}/meta/whatsapp/v24.0/${encodeURIComponent(phoneNumberId)}/messages?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=100&after=${encodeURIComponent(nextCursor)}`;
     }
     return null;
   } catch {

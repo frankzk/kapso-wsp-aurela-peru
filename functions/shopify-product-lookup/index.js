@@ -552,6 +552,9 @@ async function handleRequest(request, env = globalThis) {
       found: true,
       source: normalizedProduct.__source || "shopify",
       adRescued,
+      // "anuncio" (Click-to-WhatsApp, mensajes gratis) u "organico" (web/directo, cada mensaje de servicio se cobra):
+      // decide el formato de la presentacion. null si no vino conversationId.
+      origen: adRescued ? "anuncio" : await conversationOrigin(env, input),
       product: normalizedProduct,
       outOfStock: false,
       customerMessage: buildProductFoundMessage(normalizedProduct),
@@ -592,6 +595,20 @@ function getConfig(env = globalThis) {
 }
 
 // --- Rescate por anuncio Click-to-WhatsApp ---------------------------------
+// Origen de la conversacion, compartido con check-coverage (misma clave de KV, origen:<conversationId>).
+async function conversationOrigin(env, input) {
+  const root = isPlainObject(input.input) ? { ...input, ...input.input } : input;
+  const conversationId = root.conversationId || root.conversation_id;
+  if (!conversationId) return null;
+  const key = `origen:${conversationId}`;
+  try { const cached = env?.KV ? await env.KV.get(key) : null; if (cached === "anuncio" || cached === "organico") return cached; } catch { /* KV opcional */ }
+  let origin = null;
+  try { origin = (await resolveAdReferral(env, input)) ? "anuncio" : "organico"; } catch { origin = null; }
+  // Solo se guarda lo seguro: si la API de Kapso fallo, "no encontre anuncio" no prueba que sea organica.
+  try { if (origin === "anuncio" && env?.KV) await env.KV.put(key, origin, { expirationTtl: 3 * 24 * 3600 }); } catch { /* KV opcional */ }
+  return origin;
+}
+
 async function resolveAdReferral(env, input) {
   let referral = extractInlineReferral(input);
   if (!referral) referral = await fetchCtwaReferral(env, input);

@@ -439,6 +439,96 @@ async function followupThrottleAllows(env, phone, convId, nowMs) {
   }
 }
 
+// ----- Ahorro de mensajes de servicio (30-10-2026) -----
+// Meta cobra cada mensaje de servicio, salvo en las conversaciones que llegan por un anuncio Click-to-WhatsApp
+// (gratis 72 h). En la semana del 22 al 29-10 se cobraron 2268, todos de conversaciones sin anuncio (242 de 318
+// desde el boton de WhatsApp de la web). Dos decisiones del flujo usan esto:
+//   anuncio | organico  (fu-org, tras el 3er seguimiento): las organicas terminan ahi, sin fotos ni mas textos.
+//   responder | callar  (ack-guard, antes del agente): un "ok"/"gracias"/emoji de cierre, sin pregunta pendiente
+//                        del bot, no se contesta (el flujo sigue como si el agente hubiera respondido).
+const ORIGIN_CACHE_TTL_S = 3 * 24 * 3600;
+const CLOSING_ACKS = new Set([
+  "ok", "oka", "okey", "okay", "oki", "okis", "okk", "listo", "lista", "gracias", "muchas gracias", "mil gracias",
+  "ok gracias", "okey gracias", "gracias ok", "listo gracias", "gracias listo", "perfecto", "perfecto gracias",
+  "entendido", "entendido gracias", "vale", "genial", "excelente", "de nada", "igualmente", "bendiciones", "saludos",
+  "buenas noches", "chau", "chao", "gracias amiga", "gracias amigo", "gracias senorita", "ya gracias", "ok listo",
+]);
+const ACK_GUARD_ACTIVE_STAGES = ["datos_envio", "esperando_confirmacion", "esperando_variante"];
+
+function ackKey(text) {
+  return String(text || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function msgText(m) {
+  return String(m?.text?.body || m?.button?.text || m?.interactive?.button_reply?.title || m?.kapso?.content || m?.content || "");
+}
+
+function isClosingAck(m) {
+  if (!m) return false;
+  if (m.type === "reaction" || /^reacted with /i.test(msgText(m))) return true;
+  if (m.type && !["text", "reaction"].includes(m.type)) return false; // botones, fotos, audios: siempre al agente
+  const raw = msgText(m).trim();
+  if (!raw) return false;
+  const k = ackKey(raw);
+  if (!k) return true; // solo emojis o signos
+  return CLOSING_ACKS.has(k);
+}
+
+function whatsappConversation(payload) {
+  const ctx = isPlainObject(payload.execution_context) ? payload.execution_context : {};
+  const conv = (payload.whatsapp_context && payload.whatsapp_context.conversation) || {};
+  const sys = isPlainObject(ctx.system) ? ctx.system : {};
+  return {
+    conversationId: conv.id || extractConversationId(payload, ctx) || "",
+    phoneNumberId: conv.phone_number_id || (sys.whatsapp_config && sys.whatsapp_config.phone_number_id) || "1241790819006805",
+  };
+}
+
+async function liveConversationMessages(payload, env, { direction = "", limit = 30 } = {}) {
+  const { conversationId, phoneNumberId } = whatsappConversation(payload);
+  const cfg = await watchdogConfig(env);
+  if (!conversationId || !cfg.kapsoApiKey) return null;
+  const url = `${cfg.kapsoApiBase}/meta/whatsapp/v24.0/${encodeURIComponent(phoneNumberId)}/messages`
+    + `?conversation_id=${encodeURIComponent(conversationId)}&limit=${limit}${direction ? `&direction=${direction}` : ""}`;
+  const res = await fetch(url, { headers: { "X-API-Key": cfg.kapsoApiKey } });
+  if (!res.ok) return null;
+  const body = await res.json();
+  const data = Array.isArray(body?.data) ? body.data : [];
+  return data.slice().sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+}
+
+// "anuncio" si algun entrante trae referral de Click-to-WhatsApp; "organico" si no. Ante cualquier duda, "anuncio":
+// asi no se recorta nada que hoy funciona.
+async function conversationOrigin(payload, env) {
+  const { conversationId } = whatsappConversation(payload);
+  if (!conversationId) return "anuncio";
+  const key = `origen:${conversationId}`;
+  try { const cached = env?.KV ? await env.KV.get(key) : null; if (cached === "anuncio" || cached === "organico") return cached; } catch {}
+  let msgs = null;
+  try { msgs = await liveConversationMessages(payload, env, { direction: "inbound", limit: 100 }); } catch { msgs = null; }
+  if (!msgs) return "anuncio"; // sin respuesta de Kapso: no se decide ni se guarda
+  const origin = msgs.some((m) => m.referral || m?.kapso?.referral) ? "anuncio" : "organico";
+  try { if (env?.KV) await env.KV.put(key, origin, { expirationTtl: ORIGIN_CACHE_TTL_S }); } catch {}
+  return origin;
+}
+
+async function decideAckGuard(payload, env, vars) {
+  const stage = String(vars.stage || "").toLowerCase();
+  if (ACK_GUARD_ACTIVE_STAGES.some((s) => stage.includes(s))) return { next_edge: "responder", reason: "etapa_de_cierre" };
+  const msgs = await liveConversationMessages(payload, env, { limit: 30 });
+  if (!msgs || !msgs.length) return { next_edge: "responder", reason: "sin_historial" };
+  const dir = (m) => m?.kapso?.direction || m?.direction;
+  const lastIn = [...msgs].reverse().find((m) => dir(m) === "inbound");
+  if (!lastIn || !isClosingAck(lastIn)) return { next_edge: "responder" };
+  const ts = Number(lastIn.timestamp || 0);
+  const prevOut = [...msgs].reverse().find((m) => dir(m) === "outbound" && Number(m.timestamp || 0) <= ts);
+  if (!prevOut) return { next_edge: "responder", reason: "sin_mensaje_previo" };
+  if (msgText(prevOut).includes("?")) return { next_edge: "responder", reason: "pregunta_pendiente" };
+  return { next_edge: "callar", reason: "acuse_de_cierre" };
+}
+
 async function routeFollowup(payload, env) {
   try {
     const edges = payload.available_edges;
@@ -448,6 +538,12 @@ async function routeFollowup(payload, env) {
     const messages = (payload.whatsapp_context && Array.isArray(payload.whatsapp_context.messages))
       ? payload.whatsapp_context.messages
       : [];
+    if (edges.includes("anuncio") && edges.includes("organico")) {
+      try { return json({ next_edge: await conversationOrigin(payload, env) }); } catch { return json({ next_edge: "anuncio" }); }
+    }
+    if (edges.includes("responder") && edges.includes("callar")) {
+      try { return json(await decideAckGuard(payload, env, vars)); } catch (error) { return json({ next_edge: "responder", error: String(error && error.message || error) }); }
+    }
     // Auto-retry del lookup: si el agente quedo con un reintento pendiente
     // (pending_retry truthy), rutea a "reintentar" (espera corta + reintento);
     // si no, sigue el flujo normal. Default seguro = la otra rama.
@@ -1281,6 +1377,9 @@ globalThis.__aurelaCheckCoverage = {
   extractConversationId,
   extractCustomerPhone,
   routeFollowup,
+  isClosingAck,
+  conversationOrigin,
+  decideAckGuard,
   canonicalizeLimaPlace,
   cleanDistrictText,
   detectCourier,

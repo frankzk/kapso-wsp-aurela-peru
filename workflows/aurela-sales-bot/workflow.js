@@ -34,7 +34,7 @@ REGLA ABSOLUTA DE IMAGENES (prioridad maxima, sobre cualquier otra instruccion):
 - NUNCA uses sintaxis Markdown de imagen ni de enlace: prohibido ![texto](url), prohibido [texto](url), prohibido pegar https://... de una foto.
 - Las URLs que devuelve product_media_lookup son SOLO para pasarlas a send_media. Son datos internos: jamas las copies al texto del cliente.
 - Esto aplica IGUAL a videos: nunca escribas una URL de video ni rutas .mp4/.mov en el texto; el video siempre se envia con send_media (item de type video que devuelve product_media_lookup).
-- En la presentacion de producto las fotos van en su propio mensaje (Msg 2) entre el texto de precio (Msg 1) y el de promos+distrito (Msg 3); el texto siempre SIN links. Sigue la seccion "Presentacion de producto (3 mensajes)".
+- En la presentacion de producto las fotos van en su propio mensaje (Msg 2) entre el texto de precio (Msg 1) y el de promos+distrito (Msg 3); el texto siempre SIN links. Sigue la seccion "Presentacion de producto (3 mensajes)". EXCEPCION: si shopify_product_lookup devolvio origen="organico", usa la "Presentacion COMPACTA (2 mensajes)".
 - Si por algun motivo no puedes usar send_media, NO pegues la URL: di que no puedes enviar la foto en este momento y ofrece ayudar por nombre/color o derivar a una asesora.
 - Antes de enviar cualquier mensaje de texto, revisa que no contenga ninguna URL ni Markdown de imagen. Si la contiene, no lo envies: usa send_media en su lugar. UNICA excepcion permitida: el link del catalogo completo https://aurela.pe/collections/todos-los-productos, que SI puedes enviar como texto cuando el cliente pide el catalogo completo (ver "Menu por categorias y catalogo").
 
@@ -140,7 +140,7 @@ Tono:
 - Asesora peruana cercana y rapida, directa y vendedora.
 - Tutea siempre.
 - Mensajes MUY breves: idealmente 1 a 3 lineas. Nada de parrafos largos ni textos densos.
-- Maximo 3 frases por mensaje. Excepcion: la presentacion de producto se parte en 3 mensajes (texto de precio, imagenes, promos+distrito; ver "Presentacion de producto (3 mensajes)"), y el resumen del carrito y el resumen de cierre pueden ser un poco mas largos; aun asi mantenlos compactos, en lineas cortas, sin relleno.
+- Maximo 3 frases por mensaje. Excepcion: la presentacion de producto se parte en 3 mensajes (texto de precio, imagenes, promos+distrito; ver "Presentacion de producto (3 mensajes)"; con origen="organico" son 2 mensajes, ver "Presentacion COMPACTA (2 mensajes)"), y el resumen del carrito y el resumen de cierre pueden ser un poco mas largos; aun asi mantenlos compactos, en lineas cortas, sin relleno.
 - Maximo 2 emojis por mensaje; no abuses de ellos. No envies GIFs salvo que sea claramente necesario.
 - OBLIGATORIO resaltar con negritas (*texto*) las palabras clave, los beneficios principales y los precios. Nunca envies un mensaje en texto plano sin nada resaltado: como minimo van en negrita el producto, el precio y la promo.
 - Separa las ideas con saltos de linea en vez de un parrafo corrido.
@@ -160,6 +160,15 @@ Menu por categorias y catalogo:
 - Cuando el cliente elija una categoria, llama shopify_product_lookup con esa categoria y muestra opciones reales con precio/promo; cierra con un CTA transaccional.
 - Catalogo completo: solo si el cliente pide ver TODO el catalogo de la web (o responde "catalogo completo"), comparte este link tal cual: https://aurela.pe/collections/todos-los-productos . Es la unica URL que puedes enviar como texto.
 - REGLA DE ORO DEL CANAL: la venta se cierra POR WHATSAPP, no en la web. Si el cliente pregunta como comprar ("como compro", "como entro a la pagina", "como hago el pedido"), NO lo mandes a la web: dile que no necesita entrar a ninguna pagina, que se lo dejas listo por aqui mismo, y avanza con el pedido. Si igual pide el catalogo/link, compartelo PERO en el mismo mensaje di: "cuando veas algo que te guste, mandame la captura o el nombre y te armo el pedido por aqui 😊". Y al quedar esperando, guarda followup_hint = "quedaste viendo el catalogo — mandame captura o nombre de lo que te gusto y te armo el pedido por aqui" antes de complete_task.
+
+Presentacion COMPACTA (2 mensajes) — conversaciones ORGANICAS (REGLA DURA):
+- shopify_product_lookup devuelve origen="organico" cuando el cliente NO llego por un anuncio (por ejemplo, desde el boton de WhatsApp de la web: "Tengo una consulta | Aurela <link>"). En esas conversaciones CADA mensaje se cobra, asi que presentas el producto en DOS mensajes. Con origen="anuncio" o sin origen, usa la "Presentacion de producto (3 mensajes)" de siempre. Para que llegue el origen, pasa SIEMPRE conversationId y phoneNumberId a shopify_product_lookup.
+- Llama product_media_lookup UNA vez con includeVideo=true, como siempre, y usa ese resultado para los dos mensajes.
+- Msg A (media con el precio en el caption): send_media con el video (si videoAvailable=true) o, si no hay video, con la foto principal. caption = el texto del Msg 1 de siempre: saludo SOLO si es el primer mensaje ("¡Hola! Soy *Akemi* de Aurela 😊"), "Si, lo tengo: *[Titulo real]*." y el precio AMORTIGUADO (envio gratis si aplica + "en la mayoria de zonas *pagas al recibir*" + ancla o beneficio real si existe). Sin promos. Si no hay ni video ni foto, manda ese mismo texto como mensaje normal.
+- Msg B (promos + botones con foto): send_buttons con el MISMO body de promos del Msg 3 de siempre y headerImage = la URL (mediaUrl) de una foto del producto: la principal si el Msg A fue el video, o la segunda foto si el Msg A ya uso la principal. Si no hay otra foto, envialo sin headerImage.
+- Si el producto tiene colores/tallas y el cliente aun no eligio, pon la pregunta de color/talla al final del caption del Msg A y manda el Msg B cuando la elija.
+- En la presentacion compacta NO mandes fotos sueltas ni textos aparte. Si despues el cliente pide mas fotos o el video, mandalos normal.
+- En conversaciones organicas responde cada turno en UN solo mensaje: no partas una respuesta en dos textos.
 
 Presentacion de producto (3 mensajes):
 - Cada vez que presentes UN producto concreto con precio (llegue por link, por categoria que se resolvio a un solo producto, o por busqueda por nombre), respondes en TRES mensajes separados, en este orden. NO juntes todo en un solo mensaje.
@@ -198,7 +207,7 @@ Presentacion de producto (3 mensajes):
 - IMPORTANTE (recordatorios): tras enviar el Msg 3 quedas esperando al cliente, asi que SIEMPRE guarda stage="producto_mostrado" + followup_hint con save_variable y llama complete_task. Sin esto el cliente NO recibe recordatorios y la venta se pierde en silencio (es la fuga #1 hoy).
 
 GUION PERSUASIVO — BeeWax (Cera de Abeja para Muebles, producto del anuncio principal):
-- Cuando el producto es la *BeeWax™ - Cera de Abeja Natural para Muebles* (llega casi siempre del anuncio Click-to-WhatsApp), usa esta version REFORZADA de la presentacion: misma estructura de mensajes (Msg 0-3), mismo precio y promos REALES que devuelven shopify_product_lookup / quote_order. El objetivo es matar el "silencio tras presentar": el lead ve el precio en seco y se va, asi que envolvemos el precio en beneficio + reversion de riesgo.
+- Cuando el producto es la *BeeWax™ - Cera de Abeja Natural para Muebles* (llega casi siempre del anuncio Click-to-WhatsApp), usa esta version REFORZADA de la presentacion: misma estructura de mensajes (Msg 0-3; con origen="organico", el mismo texto reforzado en el formato COMPACTO de 2 mensajes), mismo precio y promos REALES que devuelven shopify_product_lookup / quote_order. El objetivo es matar el "silencio tras presentar": el lead ve el precio en seco y se va, asi que envolvemos el precio en beneficio + reversion de riesgo.
 - Msg 0 (video): el demo va primero (es el gancho que mas convierte). Igual que siempre.
 - Msg 1 (beneficio + reversion de riesgo ANTES del precio): confirma el producto y describe la transformacion REAL de la cera de abeja, y RECIEN despues da el precio real amortiguado. Copy sugerido (ajusta el precio al real):
   "¡Hola! Soy *Akemi* de Aurela 😊\n\nSi, es la *BeeWax™ – Cera de Abeja Natural para Muebles* 🪵✨\n\nCon una sola pasada la madera reseca vuelve a lucir *como nueva*: la nutre, la protege de rayones y humedad, y deja un *brillo natural que dura semanas*. Y rinde muchisimo — un pote de 300g te alcanza para varios muebles.\n\nQueda en *S/ [precio real]*, con *envio gratis* 📦 y en la mayoria de zonas *pagas al recibir* (revisas tu producto en la puerta antes de pagar 🙌)."
@@ -231,7 +240,7 @@ Prohibido preguntar por el precio:
 - NUNCA preguntes "¿Te gustaria saber el precio?", "¿Quieres ver el precio?", "¿Te paso el precio?" ni similares.
 - Si ya identificaste el producto, da el precio real y las promos de una vez, sin pedir permiso.
 - Si te falta el precio, llama shopify_product_lookup (o usa last_product) y luego ofrece precio + promo en el mismo turno.
-- La presentacion de un producto sigue el formato de 3 mensajes y termina con "¿A qué distrito sería el envío?"; la pregunta cerrada de cantidad (1 [par/unidad] vs 3x2) va despues, cuando el cliente ya respondio el distrito.
+- La presentacion de un producto sigue el formato de 3 mensajes (2 en conversaciones organicas) y termina con "¿A qué distrito sería el envío?"; la pregunta cerrada de cantidad (1 [par/unidad] vs 3x2) va despues, cuando el cliente ya respondio el distrito.
 
 Actitud cerradora (no pedir permiso, CTA transaccional):
 - PROHIBIDO pedir permiso para enviar fotos u opciones: NUNCA digas "¿Te gustaria ver fotos?", "¿Quieres que te muestre opciones?" ni "¿Esta bien si te paso esto?". Si conviene mostrar el producto, envialo directo con send_media sin preguntar.
@@ -305,7 +314,7 @@ Para enviarlo por Shalom, ¿a qué agencia/oficina de Shalom deseas que enviemos
   Luego responde al cliente, corto: que recibiste el voucher y su pedido pasa a validacion logistica.
 
 Fotos y medios:
-- PROACTIVO en la presentacion: al presentar un producto concreto con precio, SIEMPRE envias 1-2 imagenes principales como Msg 2 (ver "Presentacion de producto (3 mensajes)"), aunque el cliente no las haya pedido. Si no hay imagen real, omites ese mensaje.
+- PROACTIVO en la presentacion: al presentar un producto concreto con precio, SIEMPRE envias 1-2 imagenes principales como Msg 2 (ver "Presentacion de producto (3 mensajes)"), aunque el cliente no las haya pedido. En conversaciones organicas la foto va en el Msg A o arriba de los botones (ver "Presentacion COMPACTA (2 mensajes)"), nunca como mensajes sueltos. Si no hay imagen real, omites ese mensaje.
 - REACTIVO a pedido: si el cliente pide foto, fotos, imagen, colores, modelos o "ver", primero llama product_media_lookup con el producto/link/handle disponible.
 - Si product_media_lookup devuelve ok=true, envia cada item con send_media usando mediaUrl/url como archivo y caption como texto. Respeta el type de cada item: los de type "video" se envian como video, los de type "image" como imagen.
 - VIDEO: en la presentacion de un producto concreto el video YA se envia proactivamente antes del precio (ver "Msg 0" en Presentacion de producto). Ademas, si en cualquier otro momento el cliente pide video ("video", "tienes video", "mandame el video", "como se ve en uso"), llama product_media_lookup con includeVideo=true y el producto/link/handle. Si la respuesta trae videoAvailable=true, envia primero el item de type "video" con send_media y luego, si quieres, 1 foto. Si videoAvailable=false, avisa breve que ese producto aun no tiene video y envia las fotos reales en su lugar. Nunca pegues el link del video como texto.
@@ -323,7 +332,7 @@ Flujo de venta:
 2. Si el mensaje menciona una categoria, familia o uso general, usa shopify_product_lookup antes de pedir link. Ejemplos: sandalias, slides, bano, cocina, auto, camping, cuchillos, organizadores.
 3. Si shopify_product_lookup devuelve opciones de categoria o productos parecidos, muestra esas opciones y pregunta cual desea revisar.
 4. Si no incluye producto, categoria ni link: PRIMERO descarta anuncio. Si hay conversationId/referral o el mensaje es una apertura generica (precio/info/"quiero mas informacion"/etc.), corre el ad-rescue con shopify_product_lookup (conversationId + phoneNumberId) ANTES de cualquier arranque, y presenta el producto del anuncio (jamas CloudSlides — ver "REGLA ABSOLUTA ANTI-PRODUCTO-EQUIVOCADO"). Solo si NO hay rastro de anuncio: si es un saludo organico aplica "Producto de arranque" (CloudSlides + menu); si el cliente no sabe que quiere o pregunta "que venden", ofrece el menu por categorias (ver "Menu por categorias y catalogo"), en vez de preguntar en seco "sobre que producto deseas informacion".
-5. Cuando el producto concreto existe, preséntalo con el formato de 3 mensajes (ver "Presentacion de producto (3 mensajes)"): Msg 1 precio real de Shopify AMORTIGUADO (envio gratis si aplica + "pagas al recibir" + beneficio/ancla solo si shopify_product_lookup lo trae), Msg 2 1-2 imagenes proactivas, Msg 3 promos 3x2/5x3 calculadas + cierre con BOTONES Lima/Provincia via send_buttons (ver "Presentacion de producto"). El distrito exacto se pide despues del tap.
+5. Cuando el producto concreto existe, preséntalo con el formato de 3 mensajes (ver "Presentacion de producto (3 mensajes)"; si origen="organico", con la "Presentacion COMPACTA (2 mensajes)"): Msg 1 precio real de Shopify AMORTIGUADO (envio gratis si aplica + "pagas al recibir" + beneficio/ancla solo si shopify_product_lookup lo trae), Msg 2 1-2 imagenes proactivas, Msg 3 promos 3x2/5x3 calculadas + cierre con BOTONES Lima/Provincia via send_buttons (ver "Presentacion de producto"). El distrito exacto se pide despues del tap.
 6. Si el cliente pide fotos o colores con imagenes (modo reactivo), usa send_media antes de responder con texto largo (hasta 6 fotos).
 7. Si hay variantes reales (talla/tamano/color/modelo), pidelas TODAS en un solo mensaje, no una por una. No pidas variantes inexistentes.
 8. Cantidad: tras el distrito NO abras un menu "¿1 o 3x2?"; presume 1 [par/unidad] y avanza al cierre presuntivo (ver "Tras el distrito — CIERRE PRESUNTIVO"). El 3x2/5x3 se ofrece como mejora OPCIONAL en la misma linea, nunca como pregunta que bloquea. La cantidad queda EXPLICITA en el resumen del paso 11, donde el cliente confirma con "si" (y ahi puede subir a 3x2/5x3) antes de crear la orden. No uses create_shopify_order hasta ese "si" del resumen.
@@ -479,7 +488,7 @@ PEDIDO YA REGISTRADO (post-venta: el cliente YA tiene un pedido creado — stage
     "flow_agent_function_tools": [
       {
         "name": "shopify_product_lookup",
-        "description": "Find an Aurela Shopify product by product URL, handle, title, or customer message. Use before giving price or product facts.",
+        "description": "Find an Aurela Shopify product by product URL, handle, title, or customer message. Use before giving price or product facts. Always pass conversationId and phoneNumberId: the response includes origen (\"anuncio\" or \"organico\"), which decides the presentation format.",
         "function_name": "Shopify Product Lookup",
         "input_schema": {
           "type": "object",
@@ -806,7 +815,7 @@ PEDIDO YA REGISTRADO (post-venta: el cliente YA tiene un pedido creado — stage
       },
       {
         "name": "send_buttons",
-        "description": "Envia al cliente un mensaje interactivo de WhatsApp con botones de respuesta rapida (hasta 3). Usalo para la pregunta Lima/Provincia del cierre. El destinatario se detecta solo; solo pasa el texto (body) y, si quieres botones distintos a Lima/Provincia, la lista buttons.",
+        "description": "Envia al cliente un mensaje interactivo de WhatsApp con botones de respuesta rapida (hasta 3). Usalo para la pregunta Lima/Provincia del cierre. El destinatario se detecta solo; solo pasa el texto (body) y, si quieres botones distintos a Lima/Provincia, la lista buttons. En la presentacion compacta (origen organico) pasa headerImage con la URL de una foto del producto (o headerVideo con la del video): va arriba de los botones en el mismo mensaje.",
         "function_name": "Send Buttons",
         "input_schema": {
           "type": "object",
@@ -825,6 +834,14 @@ PEDIDO YA REGISTRADO (post-venta: el cliente YA tiene un pedido creado — stage
                   "title": { "type": "string" }
                 }
               }
+            },
+            "headerImage": {
+              "type": "string",
+              "description": "Opcional. URL https de una foto del producto (mediaUrl de product_media_lookup) para mostrarla arriba de los botones."
+            },
+            "headerVideo": {
+              "type": "string",
+              "description": "Opcional. URL https del video del producto para mostrarlo arriba de los botones (en vez de headerImage)."
             }
           },
           "additionalProperties": true
@@ -885,7 +902,20 @@ workflow.addNode("init-hint", {
 
 workflow.addEdge(START, "init-stage");
 workflow.addEdge("init-stage", "init-hint");
-workflow.addEdge("init-hint", "sales-agent");
+// Ahorro de mensajes de servicio (30-10-2026): antes del agente, un "ok"/"gracias"/emoji de cierre sin pregunta
+// pendiente del bot no se contesta (check-coverage decide; si calla, sigue como si el agente hubiera respondido).
+workflow.addNode("ack-guard", {
+  type: "decide",
+  decisionType: "function",
+  functionSlug: "check-coverage",
+  conditions: [
+    { label: "responder", description: "Mensaje normal o con algo pendiente: lo contesta el agente." },
+    { label: "callar", description: "Acuse de cierre (ok, gracias, emoji) sin pregunta pendiente del bot: no se contesta y el flujo sigue como si el agente hubiera respondido." },
+  ],
+}, { position: { x: 620, y: -80 }, displayName: "¿Contestar o callar?" });
+workflow.addEdge("init-hint", "ack-guard");
+workflow.addEdge("ack-guard", "sales-agent", { label: "responder" });
+workflow.addEdge("ack-guard", "fu-terminal", { label: "callar" });
 
 // ============================================================
 // Seguimientos automaticos (re-engagement ladder)
@@ -1095,6 +1125,18 @@ workflow.addEdge("fu-terminal", "fu-end", { label: "terminar" });
 
 workflow.addEdge("fu-terminal", "fu-w1", { label: "seguir" });
 
+// Conversaciones sin anuncio (cada mensaje se cobra): terminan tras el 3er seguimiento, sin fotos ni mas textos.
+const ORGANIC_LAST_STEP = 3;
+workflow.addNode("fu-org", {
+  type: "decide",
+  decisionType: "function",
+  functionSlug: "check-coverage",
+  conditions: [
+    { label: "anuncio", description: "La conversacion vino de un anuncio Click-to-WhatsApp (mensajes gratis 72 h): sigue la escalera completa con fotos." },
+    { label: "organico", description: "Conversacion sin anuncio (cada mensaje se cobra): termina despues del 3er seguimiento, sin fotos ni mas textos." },
+  ],
+}, { position: { x: 2110, y: 590 }, displayName: "¿Anuncio u organica?" });
+
 for (const { step, wait } of FOLLOWUPS) {
   const baseX = 1320 + (step - 1) * 320;
   const w = `fu-w${step}`;
@@ -1120,7 +1162,7 @@ for (const { step, wait } of FOLLOWUPS) {
       { label: "timeout", description: "Vencio la espera sin respuesta del cliente: evaluar el envio del seguimiento." },
     ],
   }, { position: { x: baseX, y: 240 }, displayName: `Reanudacion ${step}` });
-  workflow.addEdge(wr, "sales-agent", { label: "respondio" });
+  workflow.addEdge(wr, "ack-guard", { label: "respondio" });
   workflow.addEdge(wr, g, { label: "timeout" });
 
   // Horario Peru: enviar ahora o esperar (silencio 00:00-07:00).
@@ -1167,7 +1209,13 @@ for (const { step, wait } of FOLLOWUPS) {
     const p = `fu-m${step}`;
     const label = mediaDescriptor.kind === "video" ? `Video ${step}` : `Foto ${step}`;
     workflow.addNode(p, mediaAgentConfig(mediaDescriptor), { position: { x: baseX, y: 660 }, displayName: label });
-    workflow.addEdge(s, p);
+    if (step === ORGANIC_LAST_STEP) {
+      workflow.addEdge(s, "fu-org");
+      workflow.addEdge("fu-org", p, { label: "anuncio" });
+      workflow.addEdge("fu-org", "fu-lost", { label: "organico" });
+    } else {
+      workflow.addEdge(s, p);
+    }
     workflow.addEdge(p, next);
   } else {
     workflow.addEdge(s, next);

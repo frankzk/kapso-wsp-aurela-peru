@@ -38,12 +38,16 @@ async function handleRequest(request, env = globalThis) {
     const buttons = normalizeButtons(input.buttons) || DEFAULT_BUTTONS;
     const phoneNumberId = input.phoneNumberId || input.phone_number_id || ctxContext.phone_number_id || DEFAULT_PHONE_NUMBER_ID;
 
+    // Foto o video arriba de los botones (header): asi la presentacion de producto sale en un mensaje menos (cada
+    // mensaje de servicio se cobra en las conversaciones que no vienen de un anuncio).
+    const header = mediaHeader(input);
     const message = {
       messaging_product: "whatsapp",
       to,
       type: "interactive",
       interactive: {
         type: "button",
+        ...(header ? { header } : {}),
         body: { text: body.slice(0, 1024) },
         action: {
           buttons: buttons.map((b) => ({ type: "reply", reply: { id: b.id, title: b.title.slice(0, 20) } })),
@@ -68,6 +72,15 @@ async function handleRequest(request, env = globalThis) {
   } catch (error) {
     return json({ ok: false, reason: "error", error: safeError(error) });
   }
+}
+
+function mediaHeader(input) {
+  const pick = (...keys) => keys.map((k) => String(input[k] || "").trim()).find((v) => /^https:\/\//i.test(v)) || "";
+  const video = pick("headerVideo", "header_video", "videoUrl", "video");
+  if (video) return { type: "video", video: { link: video } };
+  const image = pick("headerImage", "header_image", "imageUrl", "image", "mediaUrl");
+  if (image) return { type: "image", image: { link: image } };
+  return null;
 }
 
 function normalizeButtons(raw) {

@@ -100,7 +100,7 @@ REGLA DURA: confirmar la DIRECCION no es confirmar el PEDIDO. Sin resumen mostra
 Carrito y promos:
 - Mantén un carrito interno usando save_variable/get_variable con la clave "cart_items".
 - Cada item del carrito debe guardar: productId, productTitle, variantId, variantTitle, unitPrice, quantity, productUrl si existe.
-- Cuando shopify_product_lookup devuelve found=true, guarda ese producto como "last_product" con titulo, precio, productId, variantId principal y url.
+- Cuando shopify_product_lookup devuelve found=true, guarda ese producto como "last_product" con titulo, precio, productId, variantId principal y url (si lo presentaste con presentar_producto no hace falta: el producto ya esta en la respuesta de las herramientas).
 - Cuando el cliente dice "3x2", interpreta quantity=3 para el ultimo producto mencionado o last_product.
 - Cuando el cliente dice "5x3", interpreta quantity=5 para el ultimo producto mencionado o last_product.
 - Si el cliente dice "quiero este tambien", "lo agregas" o "agregalo", agrega o actualiza ese producto en cart_items.
@@ -160,6 +160,12 @@ Menu por categorias y catalogo:
 - Cuando el cliente elija una categoria, llama shopify_product_lookup con esa categoria y muestra opciones reales con precio/promo; cierra con un CTA transaccional.
 - Catalogo completo: solo si el cliente pide ver TODO el catalogo de la web (o responde "catalogo completo"), comparte este link tal cual: https://aurela.pe/collections/todos-los-productos . Es la unica URL que puedes enviar como texto.
 - REGLA DE ORO DEL CANAL: la venta se cierra POR WHATSAPP, no en la web. Si el cliente pregunta como comprar ("como compro", "como entro a la pagina", "como hago el pedido"), NO lo mandes a la web: dile que no necesita entrar a ninguna pagina, que se lo dejas listo por aqui mismo, y avanza con el pedido. Si igual pide el catalogo/link, compartelo PERO en el mismo mensaje di: "cuando veas algo que te guste, mandame la captura o el nombre y te armo el pedido por aqui 😊". Y al quedar esperando, guarda followup_hint = "quedaste viendo el catalogo — mandame captura o nombre de lo que te gusto y te armo el pedido por aqui" antes de complete_task.
+
+PRESENTAR UN PRODUCTO CON UNA SOLA HERRAMIENTA (REGLA DURA, prioridad sobre las secciones de presentacion de abajo):
+- Cuando tengas que presentar UN producto concreto con precio (shopify_product_lookup devolvio found=true y outOfStock=false), llama presentar_producto con handle (product.handle del resultado de shopify_product_lookup), conversationId y phoneNumberId. Esa herramienta envia SOLA toda la presentacion: video y fotos, precio amortiguado, promos 3x2/5x3 y botones Lima/Provincia, con el formato correcto (anuncio u organico) y los textos especiales de BeeWax, EggMixer y SunTent.
+- Despues de presentar_producto con ok=true: guarda followup_hint con el followupHint que devuelve (save_variable) y llama complete_task. NO escribas texto al cliente, NO llames product_media_lookup, send_media ni send_buttons para esa presentacion, NO guardes otras variables.
+- Solo si presentar_producto devuelve ok=false y sent esta vacio, presenta a mano con las secciones de presentacion de abajo. Si sent trae algo, NO repitas lo ya enviado: completa solo lo que falta.
+- Para fotos de colores, el video o fotos extra que el cliente pida DESPUES, sigue usando product_media_lookup + send_media como siempre.
 
 Presentacion COMPACTA (2 mensajes) — conversaciones ORGANICAS (REGLA DURA):
 - shopify_product_lookup devuelve origen="organico" cuando el cliente NO llego por un anuncio (por ejemplo, desde el boton de WhatsApp de la web: "Tengo una consulta | Aurela <link>"). En esas conversaciones CADA mensaje se cobra, asi que presentas el producto en DOS mensajes. Con origen="anuncio" o sin origen, usa la "Presentacion de producto (3 mensajes)" de siempre. Para que llegue el origen, pasa SIEMPRE conversationId y phoneNumberId a shopify_product_lookup.
@@ -865,6 +871,34 @@ PEDIDO YA REGISTRADO (post-venta: el cliente YA tiene un pedido creado — stage
           "additionalProperties": true
         },
         "function_slug": "send-payment"
+      },
+      {
+        "name": "presentar_producto",
+        "description": "Envia al cliente la presentacion COMPLETA de un producto (video/fotos, precio, promos 3x2/5x3 y botones Lima/Provincia) en una sola llamada, con el formato correcto segun el origen de la conversacion. Usala SIEMPRE para presentar un producto concreto con precio, en vez de product_media_lookup + send_media + send_buttons. Despues guarda followup_hint con el followupHint que devuelve y llama complete_task, sin escribir texto.",
+        "input_schema": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "handle": {
+              "type": "string",
+              "description": "product.handle que devolvio shopify_product_lookup."
+            },
+            "url": {
+              "type": "string",
+              "description": "Opcional. URL del producto en aurela.pe si no tienes el handle."
+            },
+            "conversationId": {
+              "type": "string",
+              "description": "ID de la conversacion de Kapso (siempre)."
+            },
+            "phoneNumberId": {
+              "type": "string",
+              "description": "phoneNumberId del numero de WhatsApp de esta tienda (siempre)."
+            }
+          }
+        },
+        "function_name": "Presentar Producto",
+        "function_slug": "presentar-producto"
       }
     ],
     "flow_agent_app_integration_tools": [],
@@ -1208,7 +1242,9 @@ for (const { step, wait } of FOLLOWUPS) {
     // texto -> media del producto (mini-agente product_media_lookup + send_media).
     const p = `fu-m${step}`;
     const label = mediaDescriptor.kind === "video" ? `Video ${step}` : `Foto ${step}`;
-    workflow.addNode(p, mediaAgentConfig(mediaDescriptor), { position: { x: baseX, y: 660 }, displayName: label });
+    // Foto/video del seguimiento SIN modelo de IA (30-10-2026): la funcion foto-seguimiento manda la siguiente pieza
+    // del ultimo producto presentado (3ra foto, video, 4ta, 5ta). Antes era un mini-agente gpt-4.1 de 3-4 llamadas.
+    workflow.addNode(p, { type: "function", functionSlug: "foto-seguimiento" }, { position: { x: baseX, y: 660 }, displayName: label.replace("Foto", "Foto (sin IA)").replace("Video", "Video (sin IA)") });
     if (step === ORGANIC_LAST_STEP) {
       workflow.addEdge(s, "fu-org");
       workflow.addEdge("fu-org", p, { label: "anuncio" });

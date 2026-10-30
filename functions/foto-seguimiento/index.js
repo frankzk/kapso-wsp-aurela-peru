@@ -67,7 +67,10 @@ async function enviarSiguiente(payload, env) {
   if (!recipient) return { ok: false, sent: null, reason: "missing_recipient" };
 
   const caption = String(product.title || "").slice(0, 1024);
-  const msg = { messaging_product: "whatsapp", ...recipient, type: step.kind, [step.kind]: { link, ...(caption ? { caption } : {}) } };
+  // El link codificado: un nombre con "™" sin codificar hace que WhatsApp no pueda bajar el archivo (131053).
+  let safeLink = link;
+  try { safeLink = encodeURI(decodeURI(link)); } catch { safeLink = encodeURI(link); }
+  const msg = { messaging_product: "whatsapp", ...recipient, type: step.kind, [step.kind]: { link: safeLink, ...(caption ? { caption } : {}) } };
   const r = await fetch(`${apiBase}/meta/whatsapp/${API_VERSION}/${encodeURIComponent(phoneNumberId)}/messages`, {
     method: "POST", headers: { "X-API-Key": apiKey, "Content-Type": "application/json" }, body: JSON.stringify(msg),
   });

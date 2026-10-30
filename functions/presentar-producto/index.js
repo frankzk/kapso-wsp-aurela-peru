@@ -15,6 +15,7 @@ const DEFAULT_PHONE_NUMBER_ID = "1241790819006805";
 const API_VERSION = "v24.0";
 const FREE_SHIPPING_FROM = 40;
 const KV_TTL_S = 3 * 24 * 3600;
+const SEND_GAP_MS = 1200;
 const LIMA_PROVINCIA = [
   { id: "loc_lima", title: "Lima" },
   { id: "loc_provincia", title: "Provincia" },
@@ -74,7 +75,10 @@ async function presentar(input, payload, env) {
   }
 
   const sent = [];
-  for (const step of plan) {
+  for (const [i, step] of plan.entries()) {
+    // Pausa corta entre mensajes: enviados de corrido, WhatsApp a veces los entrega desordenados (botones antes que
+    // la ultima foto).
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, SEND_GAP_MS));
     const r = await sendMessage(kapso, recipient, step);
     if (!r.ok) return { ok: false, reason: "send_failed", step: step.kind, error: r.error, sent, origen };
     sent.push(step.kind);
@@ -198,17 +202,24 @@ function planOrganico(copy, media) {
 
 // ----- WhatsApp (proxy de Kapso) -----
 
+// WhatsApp baja la foto/video desde el link tal cual: un nombre con "™" sin codificar le da HTTP 400 y el mensaje
+// falla (131053), como paso con el video del AirClip el 30-10.
+function mediaLink(url) {
+  const s = String(url || "");
+  try { return encodeURI(decodeURI(s)); } catch { return encodeURI(s); }
+}
+
 async function sendMessage(kapso, recipient, step) {
   const msg = { messaging_product: "whatsapp", ...recipient };
   if (step.type === "text") Object.assign(msg, { type: "text", text: { preview_url: false, body: step.text } });
-  else if (step.type === "image") Object.assign(msg, { type: "image", image: { link: step.link, ...(step.caption ? { caption: step.caption } : {}) } });
-  else if (step.type === "video") Object.assign(msg, { type: "video", video: { link: step.link, ...(step.caption ? { caption: step.caption } : {}) } });
+  else if (step.type === "image") Object.assign(msg, { type: "image", image: { link: mediaLink(step.link), ...(step.caption ? { caption: step.caption } : {}) } });
+  else if (step.type === "video") Object.assign(msg, { type: "video", video: { link: mediaLink(step.link), ...(step.caption ? { caption: step.caption } : {}) } });
   else if (step.type === "buttons") {
     Object.assign(msg, {
       type: "interactive",
       interactive: {
         type: "button",
-        ...(step.headerImage ? { header: { type: "image", image: { link: step.headerImage } } } : {}),
+        ...(step.headerImage ? { header: { type: "image", image: { link: mediaLink(step.headerImage) } } } : {}),
         body: { text: step.body.slice(0, 1024) },
         action: { buttons: step.buttons.map((b) => ({ type: "reply", reply: { id: b.id, title: b.title.slice(0, 20) } })) },
       },

@@ -30,10 +30,13 @@ async function handleRequest(request, env = globalThis) {
     if (!body) return json({ ok: false, reason: "missing_body" });
 
     const to = normalizePhone(
-      input.to || input.recipient || input.phone || ctxContext.phone_number || ctxContext.phone
+      input.to || input.phone || ctxContext.phone_number || ctxContext.phone
       || findLatestInboundFrom(payload),
     );
-    if (!to) return json({ ok: false, reason: "missing_recipient" });
+    // Contactos que escriben con usuario de WhatsApp: no tienen numero, se les escribe por su ID (BSUID, "PE.xxx").
+    // Sin esto send_buttons fallaba con missing_recipient (16 veces el 29-30 de octubre).
+    const bsuid = to ? "" : findBusinessScopedId(input, ctxContext, payload);
+    if (!to && !bsuid) return json({ ok: false, reason: "missing_recipient" });
 
     const buttons = normalizeButtons(input.buttons) || DEFAULT_BUTTONS;
     const phoneNumberId = input.phoneNumberId || input.phone_number_id || ctxContext.phone_number_id || DEFAULT_PHONE_NUMBER_ID;
@@ -43,7 +46,7 @@ async function handleRequest(request, env = globalThis) {
     const header = mediaHeader(input);
     const message = {
       messaging_product: "whatsapp",
-      to,
+      ...(to ? { to } : { recipient: bsuid }),
       type: "interactive",
       interactive: {
         type: "button",
@@ -68,7 +71,7 @@ async function handleRequest(request, env = globalThis) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) return json({ ok: false, reason: "send_failed", status: response.status, error: data });
-    return json({ ok: true, to, buttons: buttons.map((b) => b.title), messageId: data?.messages?.[0]?.id || null });
+    return json({ ok: true, to: to || bsuid, buttons: buttons.map((b) => b.title), messageId: data?.messages?.[0]?.id || null });
   } catch (error) {
     return json({ ok: false, reason: "error", error: safeError(error) });
   }
@@ -93,6 +96,18 @@ function normalizeButtons(raw) {
     out.push({ id, title });
   }
   return out.length ? out : null;
+}
+
+function findBusinessScopedId(input, ctxContext, payload) {
+  const looks = (v) => /^[A-Z]{2}\.[0-9A-Za-z]+$/.test(String(v || "").trim());
+  for (const v of [input.recipient, ctxContext.whatsapp_business_scoped_user_id, ctxContext.contact?.business_scoped_user_id]) {
+    if (looks(v)) return String(v).trim();
+  }
+  const messages = payload?.whatsapp_context?.messages;
+  if (Array.isArray(messages)) {
+    for (const m of messages) if (looks(m?.from_user_id)) return m.from_user_id;
+  }
+  return "";
 }
 
 function findLatestInboundFrom(payload) {

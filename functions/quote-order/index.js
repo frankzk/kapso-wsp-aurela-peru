@@ -67,7 +67,8 @@ async function readJson(request) {
 function normalizeLineItems(items) {
   return items
     .map((item) => ({
-      productId: String(item.productId || item.product_id || item.product?.id || item.handle || item.title || "").trim(),
+      // Sin productId, el titulo sirve de clave de agrupacion (el agente a veces solo manda productTitle: "missing_items").
+      productId: String(item.productId || item.product_id || item.product?.id || item.handle || item.productTitle || item.product_title || item.title || "").trim(),
       productTitle: String(item.productTitle || item.product_title || item.product?.title || item.title || "").trim(),
       variantId: String(item.variantId || item.variant_id || item.variant?.id || "").trim(),
       variantTitle: String(item.variantTitle || item.variant_title || item.variant?.title || "").trim(),

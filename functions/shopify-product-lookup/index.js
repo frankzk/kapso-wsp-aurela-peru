@@ -1064,8 +1064,10 @@ function cleanProductQuery(text, handles) {
   // escribio: si entran como tokens, la marca entera queda en minoria y gana otro producto que tiene
   // "pro" en el titulo (asi un anuncio de RestPro se mapeo a SunnyRoll Pro). La marca entera ya se
   // compara en forma compacta, asi que los pedazos solo cuentan si tambien aparecen sueltos.
-  const standalone = new Set(normalizeSearchText(cleaned).split(/\s+/).filter(Boolean));
-  const camelFragments = camelCaseFragments(cleaned);
+  // Solo el texto del cliente: el handle candidato de una palabra suelta ("CabinRack" -> "cabin-rack") traeria de
+  // vuelta los pedazos como si el cliente los hubiera escrito.
+  const standalone = new Set(normalizeSearchText(text).split(/\s+/).filter(Boolean));
+  const camelFragments = camelCaseFragments(text);
   const tokens = uniqueCandidates(
     normalized
       .split(/\s+/)

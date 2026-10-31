@@ -17,6 +17,9 @@ const NON_FASHION_BAG_ACCESSORY_RE = /\b(organizador|organizadora|organizadores|
 
 const PRODUCT_STOPWORDS = new Set([
   "aurela",
+  "con",
+  "del",
+  "una",
   "alguna",
   "algunas",
   "alguno",
@@ -431,16 +434,24 @@ async function handleRequest(request, env = globalThis) {
         let autoLearned = false;
         if (!product) {
           const candidates = extractProductNameCandidates(referral.headline, referral.body);
+          // Solo vale si la MARCA del producto (la primera palabra del titulo: RestPro, SunnyRoll...)
+          // aparece en el anuncio. Sin esto, una coincidencia floja se guardaba como mapeo fijo y todos
+          // los clics siguientes recibian el producto equivocado.
+          const adCompact = compactSearchText(normalizeSearchText([referral.headline, referral.body].filter(Boolean).join(" ")));
+          const brandInAd = (p) => {
+            const brand = compactSearchText(normalizeSearchText(p?.title || "").split(/\s+/)[0] || "");
+            return brand.length >= 4 && adCompact.includes(brand);
+          };
           if (candidates.length) {
             const catalog = await loadPublicCatalog(config, env);
             for (const cand of candidates) {
               const s = searchCatalogProducts(catalog, cand, []);
-              if (s.product && !s.ambiguous) { product = s.product; autoLearned = true; break; }
+              if (s.product && !s.ambiguous && brandInAd(s.product)) { product = s.product; autoLearned = true; break; }
             }
             if (!product && (await shopifyAdmin())) {
               for (const cand of candidates) {
                 const ps = await searchProducts(config, cand, []);
-                if (ps.length === 1) { product = ps[0]; autoLearned = true; break; }
+                if (ps.length === 1 && brandInAd(ps[0])) { product = ps[0]; autoLearned = true; break; }
               }
             }
           }
@@ -699,7 +710,7 @@ function extractProductNameCandidates(headline, body) {
   while ((m = ourRe.exec(text)) !== null) push(m[1]);
 
   // 3) El titular completo como candidato de baja prioridad (a veces es el nombre).
-  if (headline) push(String(headline).replace(/[™®©✨✅✈️🔥💵🚚📦😊]/g, "").trim());
+  if (headline) push(String(headline).replace(/[^\p{L}\p{N}\s'’-]/gu, " ").trim());
 
   return out.slice(0, 6);
 }
@@ -1049,10 +1060,17 @@ function cleanProductQuery(text, handles) {
     .replace(/[|]/g, " ");
   const expanded = expandProductQueryText(cleaned);
   const normalized = normalizeSearchText(expanded);
+  // Los pedazos de una marca en camelCase ("RestPro" -> "rest", "pro") no son palabras que el cliente
+  // escribio: si entran como tokens, la marca entera queda en minoria y gana otro producto que tiene
+  // "pro" en el titulo (asi un anuncio de RestPro se mapeo a SunnyRoll Pro). La marca entera ya se
+  // compara en forma compacta, asi que los pedazos solo cuentan si tambien aparecen sueltos.
+  const standalone = new Set(normalizeSearchText(cleaned).split(/\s+/).filter(Boolean));
+  const camelFragments = camelCaseFragments(cleaned);
   const tokens = uniqueCandidates(
     normalized
       .split(/\s+/)
       .filter((token) => token.length >= 3 && !PRODUCT_STOPWORDS.has(token))
+      .filter((token) => !camelFragments.has(token) || standalone.has(token))
       .slice(0, 18),
   ).slice(0, 12);
 
@@ -1065,6 +1083,18 @@ function cleanProductQuery(text, handles) {
   });
   const joined = tokens.join(" ");
   return { normalized: joined, tokens, tokenData, compactNormalized: compactSearchText(joined) };
+}
+
+function camelCaseFragments(text) {
+  const out = new Set();
+  for (const word of String(text || "").match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]+/g) || []) {
+    if (!/[a-záéíóúñ][A-ZÁÉÍÓÚÑ]/.test(word)) continue;
+    for (const part of word.replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g, "$1 $2").split(" ")) {
+      const n = normalizeSearchText(part);
+      if (n) out.add(n);
+    }
+  }
+  return out;
 }
 
 function expandProductQueryText(text) {

@@ -45,6 +45,8 @@ async function postStoreHandoff(config, ctx, payload) {
   // El flujo de voucher no manda `reason`: no es un handoff, no va al dashboard.
   const reason = String(payload.reason || "").trim();
   if (!reason) return;
+  // Avisos que no son un lead por atender (p. ej. un pedido de agencia que se creo solo): solo Telegram.
+  if (payload.noDashboard === true || payload.noDashboard === "true") return;
 
   const body = JSON.stringify({
     event: "workflow.execution.handoff",

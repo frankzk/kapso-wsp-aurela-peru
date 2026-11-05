@@ -529,6 +529,39 @@ async function decideAckGuard(payload, env, vars) {
   return { next_edge: "callar", reason: "acuse_de_cierre" };
 }
 
+// Pedidos por agencia sin voucher: create-shopify-order los guarda como pendientes y los crea solo a las 12 h del
+// ultimo mensaje del cliente (agenciaSweep). Este disparador lo corre como maximo cada 10 minutos, solo desde pasos de
+// seguimiento en los que ningun cliente espera respuesta (vencio una espera, horario, fin de turno del agente).
+const AGENCIA_SWEEP_EVERY_MS = 10 * 60 * 1000;
+const CREATE_ORDER_FUNCTION_ID = "7b63c9c1-4405-4e86-876a-f7fccf7daa12";
+async function maybeSweepAgencia(env) {
+  try {
+    if (!env?.KV?.get) return;
+    const index = await env.KV.get("agencia_pend_index");
+    if (!index || index === "[]") return;
+    const last = Number(await env.KV.get("agencia_sweep_at")) || 0;
+    if (Date.now() - last < AGENCIA_SWEEP_EVERY_MS) return;
+    await env.KV.put("agencia_sweep_at", String(Date.now()), { expirationTtl: 24 * 3600 });
+    const cfg = await watchdogConfig(env);
+    if (!cfg.kapsoApiKey) return;
+    const id = env.CREATE_ORDER_FUNCTION_ID || CREATE_ORDER_FUNCTION_ID;
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), 25000) : null;
+    try {
+      await fetch(`${cfg.kapsoApiBase}/platform/v1/functions/${id}/invoke`, {
+        method: "POST",
+        headers: { "X-API-Key": cfg.kapsoApiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ agenciaSweep: true }),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  } catch {
+    // Nunca frena el seguimiento: el proximo paso lo vuelve a intentar.
+  }
+}
+
 async function routeFollowup(payload, env) {
   try {
     const edges = payload.available_edges;
@@ -553,13 +586,19 @@ async function routeFollowup(payload, env) {
       const on = pending && pending !== "0" && pending !== "false" && pending !== "no";
       return json({ next_edge: on ? "reintentar" : other });
     }
-    if (edges.includes("timeout") && edges.includes("respondio")) return json({ next_edge: resolveResume(system, messages) });
+    if (edges.includes("timeout") && edges.includes("respondio")) {
+      const edge = resolveResume(system, messages);
+      if (edge === "timeout") await maybeSweepAgencia(env);
+      return json({ next_edge: edge });
+    }
     if (edges.includes("terminar")) {
+      await maybeSweepAgencia(env);
       const stage = String(vars.stage || "").toLowerCase();
       const isTerminal = FOLLOWUP_TERMINAL_MARKERS.some((marker) => stage.includes(marker));
       return json({ next_edge: isTerminal ? "terminar" : "seguir" });
     }
     if (edges.includes("esperar")) {
+      await maybeSweepAgencia(env);
       // Decision de "Horario": silencio nocturno Peru primero; luego el freno
       // por numero (una sola conversacion manda recordatorios por ventana).
       if (isQuietHourPeru()) return json({ next_edge: "esperar" });
@@ -1362,6 +1401,7 @@ async function watchdogAdmin(payload, env) {
 }
 
 globalThis.__aurelaCheckCoverage = {
+  maybeSweepAgencia,
   deliveryCalendar,
   sameDayUrgentInfo,
   maybeRunWatchdog,

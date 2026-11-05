@@ -32,6 +32,12 @@ async function handleRequest(request, env = globalThis) {
     enrichConversationContext(input, payload);
     enrichCustomerFromContext(input, payload);
 
+    if (input.agenciaSweep || input.agencia_sweep) return json(await agenciaSweep(env, input));
+
+    if (isAgencyInput(input) && (await getStoreBackend(env, input)) === "woocommerce") {
+      return await handleAgencyOrder(input, env);
+    }
+
     if (input.coverage?.shippingMode === "agencia" || input.coverage?.shipping_mode === "agencia" || input.requiresLogisticsValidation || input.requires_logistics_validation) {
       return json({
         ok: false,
@@ -461,7 +467,7 @@ function wooQuoteMismatchNote(quote, orderTotal) {
   return `\nOJO PRECIO: el bot le cotizo S/ ${money(quoted).toFixed(2)} y el pedido suma S/ ${money(orderTotal).toFixed(2)}. Confirmar con el cliente antes de cobrar.`;
 }
 
-async function handleWooOrder(input, env) {
+async function handleWooOrder(input, env, opts = {}) {
   const woo = await getWooConfig(env);
   const dryRun = Boolean(input.dryRun || input.dry_run);
   input.ctwaReferral = await fetchCtwaReferral(env, input);
@@ -508,7 +514,7 @@ async function handleWooOrder(input, env) {
   const order = {
     status: "cod-pending",
     payment_method: "cod",
-    payment_method_title: "Pago contra entrega",
+    payment_method_title: opts.paymentTitle || "Pago contra entrega",
     set_paid: false,
     billing: {
       first_name: address.firstName,
@@ -517,8 +523,8 @@ async function handleWooOrder(input, env) {
       country: "PE",
       state: location.state,
       city: location.district,
-      address_1: address.address1,
-      address_2: address.address2,
+      address_1: opts.address1 || address.address1,
+      address_2: opts.address2 || address.address2,
       ...(email ? { email } : {}),
     },
     line_items: lines.map((line, i) => ({
@@ -538,7 +544,7 @@ async function handleWooOrder(input, env) {
       ? { method_id: "flat_rate", method_title: "Envio", total: money(shippingFee).toFixed(2) }
       : { method_id: "free_shipping", method_title: "Envío gratis", total: "0.00" }],
     customer_note: specialNote ? `Fecha/hora solicitada: ${specialNote}` : "",
-    meta_data: wooMeta(input, woo, discountTotal, gifts.tags),
+    meta_data: wooMeta(input, woo, discountTotal, [...gifts.tags, ...(opts.extraTags || [])]),
   };
   // La nota con los productos ya resueltos (nombre y talla) y el total calculado, aunque el agente solo haya mandado
   // el handle o el ID de la variante.
@@ -551,7 +557,8 @@ async function handleWooOrder(input, env) {
     })),
     quote: { ...quote, total: quote.total || orderTotal },
   };
-  const note = buildNote(noteInput, null)
+  const note = (opts.notePrefix ? `${opts.notePrefix}\n` : "")
+    + buildNote(noteInput, null)
     + (gifts.found.length ? `\nRegalo(s): ${summaryLine(gifts.found.map((gift) => ({ quantity: gift.quantity, productTitle: wooLineTitle(gift) })))}` : "")
     + (gifts.missing.length ? `\nREGALO POR AGREGAR A MANO (no esta en la tienda): ${gifts.missing.join("; ")}` : "")
     + (stockToValidate
@@ -590,7 +597,7 @@ async function handleWooOrder(input, env) {
     backend: "woocommerce",
     stage: "orden creada",
     conversionStatus: "confirmed",
-    conversionType: "contraentrega",
+    conversionType: opts.conversionType || "contraentrega",
     conversionTotal: Number(created.total ?? quote.total ?? 0),
     stockToValidate,
     outOfStockVariants,
@@ -604,7 +611,7 @@ async function handleWooOrder(input, env) {
       statusUrl: null,
       customer: null,
     },
-    customerMessage: stockToValidate
+    customerMessage: opts.customerMessage ? opts.customerMessage : stockToValidate
       ? "Listo, registre tu pedido. Queda sujeto a confirmacion de stock; nuestro equipo lo valida y te confirma por aqui."
       : "Listo, tu pedido quedo registrado. Nuestro equipo coordinara el despacho por aqui.",
   });
@@ -1394,6 +1401,348 @@ function buildTags(input) {
   return [...tags];
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Pedidos por AGENCIA (Shalom / Olva).
+//
+// Antes el bot nunca creaba estos pedidos: con el voucher solo avisaba por Telegram y el pedido se registraba a mano,
+// y si el cliente no mandaba el voucher el lead quedaba en manos del equipo de leads. Ahora:
+//   1) Cuando el agente ya tiene los datos completos (nombre, celular, producto y agencia + DNI en Shalom, o la
+//      direccion en Olva) llama create_shopify_order con courier: el pedido queda GUARDADO como pendiente (KV), sin
+//      crearse.
+//   2) Si llega el voucher (voucherReportado=true) el pedido se crea al instante, etiqueta voucher-reportado.
+//   3) Si pasan 12 horas desde el ultimo mensaje del cliente sin voucher, agenciaSweep lo crea solo con la etiqueta
+//      adelanto-pendiente, corta los mensajes del bot y avisa al equipo por Telegram: lo toma confirmaciones/adelantos.
+// El estado en WooCommerce es el mismo de los pedidos del bot (cod-pending); lo distinguen las etiquetas y la nota.
+// ---------------------------------------------------------------------------------------------------------------
+const AGENCIA_INDEX_KEY = "agencia_pend_index";
+const AGENCIA_TTL_S = 7 * 24 * 3600;
+const AGENCIA_WAIT_MS = 12 * 3600 * 1000;
+const AGENCIA_SWEEP_BATCH = 40;
+const AGENCIA_WORKFLOW_ID = "9c2ad1b6-c99c-432a-ba19-42882d07bd5d";
+const NOTIFY_TEAM_FUNCTION_ID = "fc7a67ec-dc65-420f-8cf5-79a0be4b032b";
+const AGENCIA_DISCARD_STAGES = ["no_interesado", "reclamo", "orden_creada"];
+
+function truthyFlag(value) {
+  if (value === true) return true;
+  const text = String(value ?? "").trim().toLowerCase();
+  return Boolean(text) && !["false", "0", "no", "null", "undefined"].includes(text);
+}
+
+function agencyCourier(input) {
+  const coverage = input.coverage || {};
+  const raw = [input.courier, coverage.courier, coverage.agency, coverage.carrier, input.shippingMethod, input.shipping_method]
+    .map((v) => String(v || "").toLowerCase()).join(" ");
+  if (/olva/.test(raw)) return "olva";
+  if (/shalom/.test(raw)) return "shalom";
+  return "";
+}
+
+function isAgencyInput(input) {
+  const coverage = input.coverage || {};
+  return Boolean(agencyCourier(input))
+    || coverage.shippingMode === "agencia" || coverage.shipping_mode === "agencia"
+    || truthyFlag(input.requiresLogisticsValidation) || truthyFlag(input.requires_logistics_validation);
+}
+
+function agencyDestination(input) {
+  const c = input.customer || {};
+  return String(c.agencia || c.agency || c.shalomAgency || c.shalom_agency || c.oficina || input.agencia || input.agency
+    || input.destination || input.destino || "").replace(/\s+/g, " ").trim();
+}
+
+function agencyDni(input) {
+  const c = input.customer || {};
+  const digits = String(c.dni || c.DNI || c.documento || input.dni || "").replace(/\D/g, "");
+  return /^\d{8}$/.test(digits) ? digits : "";
+}
+
+function agencyMissing(input, courier, phone) {
+  const c = input.customer || {};
+  const missing = [];
+  const name = String(c.name || c.fullName || c.full_name || "").trim();
+  if (name.split(/\s+/).filter(Boolean).length < 2) missing.push("nombre completo");
+  if (!phone) missing.push("celular (9 digitos, empieza con 9)");
+  if (!normalizeLineItems(input.lineItems || input.items || []).length) missing.push("producto");
+  if (courier === "shalom") {
+    if (!agencyDestination(input) && !String(c.address || "").trim()) missing.push("agencia/oficina Shalom de destino");
+    if (!agencyDni(input)) missing.push("DNI del titular que recogera (8 digitos)");
+  } else if (!String(c.address || c.direccion || "").trim()) {
+    missing.push("direccion exacta");
+  }
+  return missing;
+}
+
+async function kvGetJson(env, key) {
+  if (!env?.KV?.get || !key) return null;
+  try { const raw = await env.KV.get(key); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+async function kvPutJson(env, key, value, ttl = AGENCIA_TTL_S) {
+  if (!env?.KV?.put || !key) return;
+  try { await env.KV.put(key, JSON.stringify(value), { expirationTtl: ttl }); } catch { /* KV opcional */ }
+}
+
+async function addToAgencyIndex(env, conversationId) {
+  const index = (await kvGetJson(env, AGENCIA_INDEX_KEY)) || [];
+  if (!index.includes(conversationId)) index.push(conversationId);
+  await kvPutJson(env, AGENCIA_INDEX_KEY, index.slice(-500), 30 * 24 * 3600);
+}
+
+// Solo lo necesario para crear el pedido despues (sin el contexto de ejecucion ni mensajes).
+function agencyStoredInput(input) {
+  const keep = ["customer", "items", "lineItems", "quote", "coverage", "conversationId", "conversation_id", "phoneNumberId",
+    "phone_number_id", "phone", "courier", "agencia", "destination", "dni", "specialDeliveryNote", "stockPorValidar", "email"];
+  const out = {};
+  for (const key of keep) if (input[key] !== undefined) out[key] = input[key];
+  return out;
+}
+
+async function handleAgencyOrder(input, env) {
+  const courier = agencyCourier(input) || "shalom";
+  const conversationId = String(input.conversationId || input.conversation_id || "").trim();
+  const key = conversationId ? `agencia_pend:${conversationId}` : "";
+  input.coverage = { ...(input.coverage || {}), shippingMode: "agencia", courier };
+  const voucher = truthyFlag(input.voucherReportado ?? input.voucher_reportado);
+  const auto = truthyFlag(input.autoSinAdelanto);
+  const dryRun = Boolean(input.dryRun || input.dry_run);
+  const entry = await kvGetJson(env, key);
+
+  if (truthyFlag(input.cancelarPendiente ?? input.cancelar_pendiente)) {
+    if (entry && entry.status === "pendiente" && !dryRun) await kvPutJson(env, key, { ...entry, status: "cancelado", cancelledAt: Date.now() });
+    return json({ ok: true, cancelled: Boolean(entry && entry.status === "pendiente"), message: "Pedido pendiente anulado: no se creara solo." });
+  }
+
+  // Ya creado (por voucher o a las 12 h): nunca dos pedidos de la misma conversacion.
+  if (entry && entry.status === "creada" && entry.order) {
+    if (voucher && !entry.voucher && !dryRun) {
+      await markAgencyOrderVoucher(env, entry);
+      await kvPutJson(env, key, { ...entry, voucher: true, voucherAt: Date.now() });
+    }
+    return json({
+      ok: true,
+      alreadyCreated: true,
+      backend: "woocommerce",
+      conversionType: "agencia",
+      order: entry.order,
+      message: voucher
+        ? "El pedido ya estaba creado; quedo marcado con el voucher para que el equipo valide el pago."
+        : "El pedido de esta conversacion ya esta creado; no crees otro.",
+    });
+  }
+
+  const phone = wooCustomerPhone(input, buildAddress(input.customer || {}, input))
+    || wooCustomerPhone({ customer: { phone: await wooConversationPhone(env, input) } }, {});
+  if (phone && !input.customer?.phone) input.customer = { ...(input.customer || {}), phone };
+  const missing = agencyMissing(input, courier, phone);
+  if (missing.length) {
+    return json({
+      ok: false,
+      reason: "missing_fields",
+      missing,
+      message: `Para dejar el pedido de ${courier === "shalom" ? "Shalom" : "Olva"} listo faltan: ${missing.join(", ")}. Pideselos al cliente (en un solo mensaje) y vuelve a llamar.`,
+    });
+  }
+
+  const dest = agencyDestination(input) || String(input.customer?.address || "").trim();
+  const dni = agencyDni(input);
+
+  if (!voucher && !auto) {
+    if (!dryRun && key) {
+      await kvPutJson(env, key, { status: "pendiente", courier, savedAt: Date.now(), input: agencyStoredInput(input) });
+      await addToAgencyIndex(env, conversationId);
+    }
+    return json({
+      ok: true,
+      pending: true,
+      dryRun,
+      courier,
+      saved: Boolean(key) && !dryRun,
+      message: "Datos del pedido guardados (todavia NO es un pedido). Al cliente NO le digas que su pedido esta creado: "
+        + "pidele el voucher. Cuando lo envie, vuelve a llamar create_shopify_order con voucherReportado=true. Si en 12 horas "
+        + "desde su ultimo mensaje no llega, el pedido se crea solo para el equipo de adelantos.",
+    });
+  }
+
+  const shalom = courier === "shalom";
+  const envio = shalom ? `Agencia Shalom: ${dest}` : `Olva Courier: ${String(input.customer?.address || dest).trim()}`;
+  const header = voucher
+    ? (shalom ? "VOUCHER REPORTADO: validar el adelanto de S/30 (Yape) antes de despachar." : "VOUCHER REPORTADO: validar el pago total (Yape) antes de despachar por Olva.")
+    : (shalom
+      ? "SIN ADELANTO: 12 h sin voucher desde el ultimo mensaje del cliente. Cobrar el adelanto de S/30 por Yape antes de despachar."
+      : "SIN PAGO: 12 h sin voucher desde el ultimo mensaje del cliente. Olva requiere el pago total por Yape antes de despachar.");
+  const notePrefix = [header, `Envio: ${envio}${dni ? ` · DNI ${dni}` : ""}`, input.autoNote ? String(input.autoNote) : ""].filter(Boolean).join("\n");
+  if (shalom) input.customer = { ...(input.customer || {}), address: envio };
+
+  const response = await handleWooOrder(input, env, {
+    extraTags: [`agencia-${courier}`, voucher ? "voucher-reportado" : "adelanto-pendiente"],
+    notePrefix,
+    conversionType: "agencia",
+    paymentTitle: shalom ? "Agencia Shalom (adelanto S/30 + saldo)" : "Olva Courier (pago anticipado)",
+    address1: shalom ? envio.slice(0, 200) : "",
+    address2: shalom && dni ? `DNI ${dni}` : "",
+    customerMessage: voucher
+      ? "Recibi tu voucher ✅ Tu pedido pasa a validacion logistica; apenas lo validemos te confirmamos el despacho por aqui."
+      : "",
+  });
+  const result = await response.clone().json().catch(() => null);
+  if (result?.ok && !result.dryRun && key) {
+    await kvPutJson(env, key, { status: "creada", courier, voucher, auto, createdAt: Date.now(), order: result.order, input: agencyStoredInput(input) });
+  }
+  return response;
+}
+
+async function markAgencyOrderVoucher(env, entry) {
+  try {
+    const woo = await getWooConfig(env);
+    const id = entry.order?.id;
+    if (!id) return;
+    await wooApi(woo, `/orders/${id}/notes`, { method: "POST", body: { note: "VOUCHER REPORTADO por WhatsApp: validar el pago antes de despachar.", customer_note: false } });
+    const order = await wooApi(woo, `/orders/${id}`);
+    const tagsMeta = (order?.meta_data || []).find((m) => m.key === "kapta_tags");
+    const tags = String(tagsMeta?.value || "").split(",").map((t) => t.trim()).filter((t) => t && t !== "adelanto-pendiente");
+    if (!tags.includes("voucher-reportado")) tags.push("voucher-reportado");
+    await wooApi(woo, `/orders/${id}`, { method: "PUT", body: { meta_data: [{ key: "kapta_tags", value: tags.join(",") }] } });
+  } catch {
+    // La nota es un extra: el pedido ya existe y el equipo recibe el aviso por Telegram.
+  }
+}
+
+async function agencyKapsoConfig(env) {
+  const cfg = getKapsoConfig(env);
+  if (!cfg.apiKey && env?.KV?.get) {
+    try { cfg.apiKey = await env.KV.get("KAPSO_API_KEY"); } catch { /* sin KV */ }
+  }
+  return cfg;
+}
+
+async function kapsoGet(cfg, path) {
+  const res = await fetch(`${cfg.apiBase}${path}`, { headers: { "X-API-Key": cfg.apiKey } });
+  if (!res.ok) throw new Error(`kapso_${res.status}`);
+  return res.json();
+}
+
+// Ultimo mensaje del cliente y si mando una imagen despues de guardar el pedido (podria ser el voucher).
+async function agencyConversationActivity(cfg, phoneNumberId, conversationId, savedAt) {
+  const body = await kapsoGet(cfg, `/meta/whatsapp/v24.0/${encodeURIComponent(phoneNumberId || DEFAULT_PHONE_NUMBER_ID)}/messages`
+    + `?conversation_id=${encodeURIComponent(conversationId)}&direction=inbound&limit=20`);
+  let lastInbound = 0;
+  let imageAfterSave = false;
+  for (const m of body?.data || []) {
+    const ts = Number(m.timestamp || 0) * 1000;
+    if (ts > lastInbound) lastInbound = ts;
+    if (ts > savedAt && (m.type === "image" || m.type === "document" || m?.kapso?.has_media)) imageAfterSave = true;
+  }
+  return { lastInbound, imageAfterSave };
+}
+
+async function agencyExecutions(cfg, conversationId) {
+  const body = await kapsoGet(cfg, `/platform/v1/workflows/${AGENCIA_WORKFLOW_ID}/executions?whatsapp_conversation_id=${encodeURIComponent(conversationId)}&per_page=5`);
+  return (body?.data || []).filter((e) => e.whatsapp_conversation_id === conversationId);
+}
+
+async function agencyStage(cfg, executions) {
+  const latest = executions[0];
+  if (!latest) return "";
+  try {
+    const detail = await kapsoGet(cfg, `/platform/v1/workflow_executions/${latest.id}`);
+    return String(detail?.data?.execution_context?.vars?.stage || "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+// El equipo toma el caso: se cierran los procesos del bot de esa conversacion (sin mas recordatorios).
+async function endAgencyExecutions(cfg, executions) {
+  for (const e of executions) {
+    if (!["waiting", "running", "handoff"].includes(e.status)) continue;
+    try {
+      await fetch(`${cfg.apiBase}/platform/v1/workflow_executions/${e.id}`, {
+        method: "PATCH",
+        headers: { "X-API-Key": cfg.apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ workflow_execution: { status: "ended" } }),
+      });
+    } catch { /* si falla, el bot igual se detiene al ver el pedido creado */ }
+  }
+}
+
+async function notifyAgencyOrder(cfg, entryInput, order, courier, conversationId) {
+  try {
+    const c = entryInput.customer || {};
+    const items = normalizeLineItems(entryInput.lineItems || entryInput.items || []);
+    await fetch(`${cfg.apiBase}/platform/v1/functions/${NOTIFY_TEAM_FUNCTION_ID}/invoke`, {
+      method: "POST",
+      headers: { "X-API-Key": cfg.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reason: `Pedido ${courier === "shalom" ? "Shalom" : "Olva"} creado SIN ADELANTO (12 h sin voucher)`,
+        noDashboard: true,
+        conversationId,
+        customerName: c.name || "",
+        phone: c.phone || entryInput.phone || "",
+        product: summaryLine(items),
+        total: String(order?.total || entryInput.quote?.total || ""),
+        courier,
+        destination: agencyDestination(entryInput) || c.address || "",
+        dni: agencyDni(entryInput),
+        note: `${order?.name || ""} en WooCommerce con la etiqueta adelanto-pendiente. El bot ya no le escribe: cobrar el adelanto y confirmar.`,
+      }),
+    });
+  } catch { /* el pedido ya existe con su nota */ }
+}
+
+// Barrido: lo dispara check-coverage como maximo cada 10 minutos desde los pasos de seguimiento (nunca con un cliente
+// esperando respuesta). Crea los pedidos pendientes cuyo cliente no escribe hace 12 horas.
+async function agenciaSweep(env, input = {}) {
+  const index = (await kvGetJson(env, AGENCIA_INDEX_KEY)) || [];
+  if (!index.length) return { ok: true, pending: 0, results: [] };
+  const cfg = await agencyKapsoConfig(env);
+  if (!cfg.apiKey) return { ok: false, reason: "missing_kapso_key" };
+  const now = Date.now();
+  const dryRun = Boolean(input.dryRun || input.dry_run);
+  const keep = [];
+  const results = [];
+  const batch = index.slice(0, AGENCIA_SWEEP_BATCH);
+  for (const conversationId of batch) {
+    const key = `agencia_pend:${conversationId}`;
+    const entry = await kvGetJson(env, key);
+    if (!entry || entry.status !== "pendiente") continue;
+    let activity = { lastInbound: 0, imageAfterSave: false };
+    try {
+      activity = await agencyConversationActivity(cfg, entry.input?.phoneNumberId || entry.input?.phone_number_id, conversationId, entry.savedAt);
+    } catch { keep.push(conversationId); continue; }
+    const last = Math.max(activity.lastInbound || 0, entry.savedAt || 0);
+    const dueInMin = Math.round((last + AGENCIA_WAIT_MS - now) / 60000);
+    if (dueInMin > 0) { keep.push(conversationId); results.push({ conversationId, dueInMin }); continue; }
+
+    let executions = [];
+    try { executions = await agencyExecutions(cfg, conversationId); } catch { executions = []; }
+    const stage = await agencyStage(cfg, executions);
+    if (AGENCIA_DISCARD_STAGES.some((s) => stage.includes(s))) {
+      if (!dryRun) await kvPutJson(env, key, { ...entry, status: "descartado", stage, discardedAt: now });
+      results.push({ conversationId, discarded: stage });
+      continue;
+    }
+    if (dryRun) { keep.push(conversationId); results.push({ conversationId, due: true, stage }); continue; }
+
+    const autoNote = activity.imageAfterSave
+      ? "OJO: el cliente envio una imagen despues de los datos del Yape; revisar si es el voucher."
+      : "";
+    const response = await handleAgencyOrder({ ...entry.input, autoSinAdelanto: true, autoNote }, env);
+    const result = await response.json().catch(() => ({ ok: false, reason: "bad_response" }));
+    if (result.ok) {
+      await endAgencyExecutions(cfg, executions);
+      await notifyAgencyOrder(cfg, entry.input || {}, result.order, entry.courier, conversationId);
+      results.push({ conversationId, created: result.order?.name || true });
+    } else {
+      const attempts = (entry.attempts || 0) + 1;
+      await kvPutJson(env, key, { ...entry, attempts, lastError: result.reason || "error", status: attempts >= 3 ? "fallido" : "pendiente" });
+      if (attempts < 3) keep.push(conversationId);
+      results.push({ conversationId, error: result.reason || "error", attempts });
+    }
+  }
+  if (!dryRun) await kvPutJson(env, AGENCIA_INDEX_KEY, keep.concat(index.slice(AGENCIA_SWEEP_BATCH)), 30 * 24 * 3600);
+  return { ok: true, pending: keep.length + Math.max(0, index.length - AGENCIA_SWEEP_BATCH), results };
+}
+
 // Nota corta para logistica: solo lo que se necesita de un vistazo. Se omiten
 // datos que Shopify ya muestra en otros bloques (total, ids, customer id) y las
 // lineas vacias. La direccion SI se conserva aqui porque el campo estructurado
@@ -1690,6 +2039,11 @@ function safeError(error) {
 }
 
 globalThis.__aurelaCreateShopifyOrder = {
+  agenciaSweep,
+  handleAgencyOrder,
+  isAgencyInput,
+  agencyCourier,
+  agencyMissing,
   buildAddress,
   buildNote,
   buildOrderInput,

@@ -432,16 +432,18 @@ async function handleRequest(request, env = globalThis) {
         // producto, se aprende el mapeo (KV) para los siguientes clics. Asi un
         // anuncio nuevo se auto-mapea en el PRIMER clic, sin intervencion manual.
         let autoLearned = false;
+        // Un producto solo vale para el anuncio si TODAS sus palabras de identidad (RestPro; Calcetines + Tribal)
+        // aparecen en el anuncio. Sin esto, una coincidencia floja se guardaba como mapeo fijo y todos los clics
+        // siguientes recibian el producto equivocado.
+        const adCompact = compactSearchText(normalizeSearchText([referral.headline, referral.body].filter(Boolean).join(" ")));
+        const brandInAd = (p) => {
+          const identity = productIdentityTokens(p?.title);
+          if (identity.length > 0 && identity.every((t) => adCompact.includes(t))) return true;
+          const descriptor = productDescriptorTokens(p?.title);
+          return descriptor.length >= 2 && descriptor.every((t) => adCompact.includes(t));
+        };
         if (!product) {
           const candidates = extractProductNameCandidates(referral.headline, referral.body);
-          // Solo vale si la MARCA del producto (la primera palabra del titulo: RestPro, SunnyRoll...)
-          // aparece en el anuncio. Sin esto, una coincidencia floja se guardaba como mapeo fijo y todos
-          // los clics siguientes recibian el producto equivocado.
-          const adCompact = compactSearchText(normalizeSearchText([referral.headline, referral.body].filter(Boolean).join(" ")));
-          const brandInAd = (p) => {
-            const brand = compactSearchText(normalizeSearchText(p?.title || "").split(/\s+/)[0] || "");
-            return brand.length >= 4 && adCompact.includes(brand);
-          };
           if (candidates.length) {
             const catalog = await loadPublicCatalog(config, env);
             for (const cand of candidates) {
@@ -461,16 +463,18 @@ async function handleRequest(request, env = globalThis) {
           if (learnedHandle) { try { await env.KV.put(`ctwa:${referral.source_id}`, learnedHandle); } catch { /* KV opcional */ } }
         }
 
-        // 3) Ultimo respaldo: busqueda por el texto completo del anuncio.
+        // 3) Ultimo respaldo: busqueda por el texto completo del anuncio. Con el mismo control de identidad: un
+        // anuncio de calcetines llego a presentar el CarCleanKit por una coincidencia floja. Sin producto seguro,
+        // el agente pregunta en vez de presentar otro.
         if (!product) {
           const adText = adReferralText(referral);
           if (adText) {
             const catalog = await loadPublicCatalog(config, env);
             const adSearch = searchCatalogProducts(catalog, adText, []);
-            product = adSearch.product || null;
+            product = adSearch.product && brandInAd(adSearch.product) ? adSearch.product : null;
             if (!product && (await shopifyAdmin())) {
               const adProducts = await searchProducts(config, adText, []);
-              product = adProducts[0] || null;
+              product = adProducts[0] && brandInAd(adProducts[0]) ? adProducts[0] : null;
             }
           }
         }
@@ -685,6 +689,29 @@ function adReferralText(referral) {
 // Extrae candidatos de NOMBRE de producto del texto del anuncio, ordenados de
 // mas a menos especifico. Sirve para auto-mapear un anuncio nuevo con precision
 // (buscar "TravelersBackpack" o "Cera de Abeja Natural", no todo el cuerpo).
+// Las palabras que identifican al producto: el nombre antes del primer separador ("RestPro: ...", "CabinRack™ - ...")
+// o, sin separador, las primeras 7 palabras, sin las genericas. "Pack de 10 Pares de Calcetines Tribal ..." da
+// ["calcetines", "tribal"]: asi un anuncio de los Tribal no puede quedar mapeado al pack FourLines (antes bastaba
+// con que el anuncio dijera "pack").
+const IDENTITY_GENERIC = new Set(["pack", "packs", "set", "kit", "combo", "juego", "pares", "unidades", "unidad", "piezas"]);
+// Respaldo para anuncios que describen sin nombrar la marca ("Con nuestra Cera de Abeja Natural..." para
+// "BeeWax™ - Cera de Abeja Natural para..."): las primeras 3 palabras utiles despues del separador.
+function productDescriptorTokens(title) {
+  const parts = String(title || "").split(/\s[-–—:|]\s|:\s|\s[-–—]/);
+  if (parts.length < 2) return [];
+  return normalizeSearchText(parts.slice(1).join(" ")).split(/\s+/)
+    .filter((t) => t.length >= 4 && !/^\d+$/.test(t) && !IDENTITY_GENERIC.has(t) && !PRODUCT_STOPWORDS.has(t))
+    .slice(0, 3).map(compactSearchText);
+}
+
+function productIdentityTokens(title) {
+  const raw = String(title || "");
+  const head = raw.split(/\s[-–—:|]\s|:\s|\s[-–—]/)[0] || raw;
+  return normalizeSearchText(head).split(/\s+/).slice(0, 7)
+    .filter((t) => t.length >= 4 && !/^\d+$/.test(t) && !IDENTITY_GENERIC.has(t) && !PRODUCT_STOPWORDS.has(t))
+    .map(compactSearchText);
+}
+
 function extractProductNameCandidates(headline, body) {
   const text = [headline, body].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
   if (!text) return [];
@@ -706,7 +733,8 @@ function extractProductNameCandidates(headline, body) {
   }
 
   // 2) Frase tras "nuestro/nuestra/el/la...": el nombre suele ir ahi.
-  const ourRe = new RegExp(`\\b(?:nuestr[oa]s?|el|la|los|las|tu|tus)\\s+([A-ZÁÉÍÓÚÑ][${W}]*(?:\\s+(?:de|del|para|con|y|a|natural|premium|pro|plus|[A-ZÁÉÍÓÚÑ][${W}]*)){0,4})`, "g");
+  // Admite numeros y hasta 7 palabras: "el Pack de 10 Pares de Calcetines Tribal" (antes se cortaba en "Pack de").
+  const ourRe = new RegExp(`\\b(?:nuestr[oa]s?|el|la|los|las|tu|tus)\\s+([A-ZÁÉÍÓÚÑ][${W}]*(?:\\s+(?:de|del|para|con|y|a|natural|premium|pro|plus|\\d+|[A-ZÁÉÍÓÚÑ][${W}]*)){0,7})`, "g");
   while ((m = ourRe.exec(text)) !== null) push(m[1]);
 
   // 3) El titular completo como candidato de baja prioridad (a veces es el nombre).
@@ -1931,4 +1959,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaProductLookup = { adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText, searchCatalogProducts, searchCategoryProducts, scoreCatalogProduct, scoreCategoryProduct, cleanProductQuery, detectCategoryQuery, publicProductToNormalized };
+globalThis.__aurelaProductLookup = { productIdentityTokens, productDescriptorTokens, adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText, searchCatalogProducts, searchCategoryProducts, scoreCatalogProduct, scoreCategoryProduct, cleanProductQuery, detectCategoryQuery, publicProductToNormalized };

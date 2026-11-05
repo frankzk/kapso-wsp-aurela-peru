@@ -22,4 +22,9 @@ for (const q of ["RestPro", "CabinRack"]) {
 const cands = L.extractProductNameCandidates("😴 Descansa con mayor comodidad", "¿Buscas una almohada? 😴💤 Con RestPro™, disfruta");
 assert.ok(cands.includes("RestPro"));
 assert.ok(cands.every((c) => !/[\uD800-\uDFFF]/.test(c)), "sin emojis partidos");
+// Productos con nombre generico al inicio ("Pack de 10 Pares de ..."): la identidad son las palabras que los distinguen.
+assert.deepStrictEqual(L.productIdentityTokens("Pack de 10 Pares de Calcetines Tribal Desodorantes"), ["calcetines", "tribal"]);
+assert.deepStrictEqual(L.productIdentityTokens("RestPro: Almohada de Tracción Inversa"), ["restpro"]);
+assert.deepStrictEqual(L.productIdentityTokens("Bamboo Cheese Board™ - Set Premium"), ["bamboo", "cheese", "board"]);
+assert.ok(L.extractProductNameCandidates("🧦 ¡10 pares!", "Descubre el Pack de 10 Pares de Calcetines Tribal, diseñados").includes("Pack de 10 Pares de Calcetines Tribal"));
 console.log("OK: marcas en camelCase no se parten (RestPro no cae en SunnyRoll Pro)");

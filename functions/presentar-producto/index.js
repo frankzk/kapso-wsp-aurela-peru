@@ -29,6 +29,12 @@ if (typeof addEventListener === "function") {
   addEventListener("fetch", (event) => event.respondWith(handleRequest(event.request, globalThis)));
 }
 
+// Un contacto que escribe con usuario de WhatsApp no trae numero, y sin celular no se puede crear el pedido (Kapta llama
+// y escribe a ese numero). El agente no ve el contexto tecnico: se lo dice la herramienta.
+const PEDIR_CELULAR = "IMPORTANTE: este cliente escribe SIN numero de celular visible (usuario de WhatsApp). Cuando le pidas los "
+  + "datos de envio, incluye en ESE MISMO mensaje su *numero de celular* (9 digitos, empieza con 9) y pasalo en customer.phone. "
+  + "Nunca le preguntes si coordinamos \"a este mismo numero\": no tenemos ninguno.";
+
 async function handleRequest(request, env = globalThis) {
   let payload = {};
   try { payload = await request.json(); } catch { payload = {}; }
@@ -71,7 +77,7 @@ async function presentar(input, payload, env) {
   const plan = origen === "organico" ? planOrganico(copy, media) : planAnuncio(copy, media);
 
   if (input.dryRun || input.dry_run) {
-    return { ok: true, dryRun: true, origen, firstContact, recipient: recipient.to ? "telefono" : "usuario", plan, followupHint: `te quedó pendiente el *${copy.shortTitle}*` };
+    return { ok: true, dryRun: true, origen, firstContact, recipient: recipient.to ? "telefono" : "usuario", ...(recipient.to ? {} : { contactoSinNumero: true }), plan, followupHint: `te quedó pendiente el *${copy.shortTitle}*` };
   }
 
   const sent = [];
@@ -97,7 +103,9 @@ async function presentar(input, payload, env) {
     sent,
     product: { handle: product.handle || handle, title: product.title, price: money(product.price), compareAt: product.compare_at_price ? money(product.compare_at_price) : null, options: copy.options },
     followupHint: `te quedó pendiente el *${copy.shortTitle}* — recuerda que en la mayoría de zonas pagas al recibir y el envío es gratis 🙌`,
-    instrucciones: "La presentacion YA se envio al cliente. No escribas texto ni mandes fotos ni botones. Guarda followup_hint (save_variable) con followupHint y llama complete_task.",
+    instrucciones: "La presentacion YA se envio al cliente. No escribas texto ni mandes fotos ni botones. Guarda followup_hint (save_variable) con followupHint y llama complete_task."
+      + (recipient.to ? "" : " " + PEDIR_CELULAR),
+    ...(recipient.to ? {} : { contactoSinNumero: true }),
   };
 }
 

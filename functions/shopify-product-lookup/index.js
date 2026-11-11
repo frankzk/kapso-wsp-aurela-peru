@@ -344,7 +344,45 @@ if (typeof addEventListener === "function") {
   });
 }
 
+// El agente no ve si el contacto tiene numero: un cliente que escribe con usuario de WhatsApp (sin numero) llega sin
+// phone_number y solo con su ID de usuario. Se avisa en la respuesta para que pida el celular junto con los datos de
+// envio (sin celular no hay pedido) y nunca pregunte por "este mismo numero".
+function contactWithoutNumber(payload) {
+  const ctx = (payload && typeof payload.execution_context === "object" && payload.execution_context) || {};
+  const c = (ctx.context && typeof ctx.context === "object" && ctx.context) || {};
+  const wa = (payload && typeof payload.whatsapp_context === "object" && payload.whatsapp_context) || {};
+  const digits = (v) => String(v || "").replace(/\D/g, "");
+  const phone = [c.phone_number, c.wa_id, c.contact?.wa_id, wa.conversation?.phone_number, wa.contact?.wa_id]
+    .map(digits).find((d) => d.length >= 9);
+  if (phone) return false;
+  const msgs = Array.isArray(wa.messages) ? wa.messages : [];
+  if (msgs.some((m) => digits(m?.from || m?.kapso?.phone_number).length >= 9)) return false;
+  return Boolean(c.whatsapp_business_scoped_user_id || c.contact?.business_scoped_user_id
+    || wa.conversation?.business_scoped_user_id || msgs.some((m) => m?.from_user_id));
+}
+
+const PEDIR_CELULAR = "IMPORTANTE: este cliente escribe SIN numero de celular visible (usuario de WhatsApp). Cuando le pidas los "
+  + "datos de envio, incluye en ESE MISMO mensaje su *numero de celular* (9 digitos, empieza con 9) y pasalo en customer.phone. "
+  + "Nunca le preguntes si coordinamos \"a este mismo numero\": no tenemos ninguno.";
+
 async function handleRequest(request, env = globalThis) {
+  if (request.method === "GET") return handleRequestCore(request, env);
+  let raw = "";
+  try { raw = await request.text(); } catch { raw = ""; }
+  const response = await handleRequestCore(new Request(request.url || "https://fn.local/", { method: "POST", body: raw || "{}", headers: { "Content-Type": "application/json" } }), env);
+  let payload = null;
+  try { payload = JSON.parse(raw || "{}"); } catch { payload = null; }
+  if (!payload || payload.adSeed || payload.adDebug || payload.catalogDebug || !contactWithoutNumber(payload)) return response;
+  try {
+    const body = await response.clone().json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) return response;
+    return json({ ...body, contactoSinNumero: true, pedirCelular: PEDIR_CELULAR });
+  } catch {
+    return response;
+  }
+}
+
+async function handleRequestCore(request, env = globalThis) {
   try {
     const input = await readJson(request);
     if (input.adSeed || input.adDebug) return adAdmin(input, env);
@@ -1959,4 +1997,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaProductLookup = { productIdentityTokens, productDescriptorTokens, adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText, searchCatalogProducts, searchCategoryProducts, scoreCatalogProduct, scoreCategoryProduct, cleanProductQuery, detectCategoryQuery, publicProductToNormalized };
+globalThis.__aurelaProductLookup = { contactWithoutNumber, productIdentityTokens, productDescriptorTokens, adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText, searchCatalogProducts, searchCategoryProducts, scoreCatalogProduct, scoreCategoryProduct, cleanProductQuery, detectCategoryQuery, publicProductToNormalized };

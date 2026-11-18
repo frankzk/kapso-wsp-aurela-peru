@@ -170,8 +170,37 @@ function availableValues(product, option) {
 
 // ----- Medios y planes de envio -----
 
+// Fotos de un color agotado fuera, y primero las del color disponible. Caso Crucis+ (18-11): solo hay Negro y la 2da
+// foto era "crucis-cobre-clasico-3x4.jpg". La tienda no dice que foto es de que color: se usa la foto destacada de
+// cada variante y, si no hay, el nombre del archivo (el color sin tildes ni espacios: "cobre-clasico", "negro").
+function slugColor(v) {
+  return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function variantValues(v) {
+  const vals = [v?.option1, v?.option2, v?.option3].filter(Boolean);
+  if (!vals.length && v?.title && v.title !== "Default Title") vals.push(...String(v.title).split(" / "));
+  return vals.map(slugColor).filter((x) => x.length >= 4);
+}
+
+function filterImagesByStock(product, images) {
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+  if (variants.length < 2 || variants.every((v) => v.available)) return images;
+  const availableVals = new Set(variants.filter((v) => v.available).flatMap(variantValues));
+  const soldOutVals = [...new Set(variants.filter((v) => !v.available).flatMap(variantValues))].filter((x) => !availableVals.has(x));
+  const soldOutImgs = new Set(variants.filter((v) => !v.available).map((v) => v.featured_image?.src || v.featured_image).filter(Boolean)
+    .map((u) => String(u).split("?")[0].replace(/^https?:/, "")));
+  const file = (u) => slugColor(decodeURIComponent(String(u).split("?")[0].split("/").pop() || ""));
+  const has = (u, vals) => [...vals].some((x) => file(u).includes(x));
+  const kept = images.filter((u) => !soldOutImgs.has(String(u).split("?")[0].replace(/^https?:/, ""))
+    && !(has(u, soldOutVals) && !has(u, availableVals)));
+  if (!kept.length) return images;
+  return [...kept.filter((u) => has(u, availableVals)), ...kept.filter((u) => !has(u, availableVals))];
+}
+
 function productMedia(product) {
-  const images = (product.images || []).map((s) => (typeof s === "string" ? s : s?.src)).filter((s) => /^https:\/\//i.test(s || ""));
+  const allImages = (product.images || []).map((s) => (typeof s === "string" ? s : s?.src)).filter((s) => /^https:\/\//i.test(s || ""));
+  const images = filterImagesByStock(product, allImages);
   let video = "";
   for (const m of product.media || []) {
     if (m?.media_type !== "video") continue;
@@ -316,4 +345,5 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-globalThis.__aurelaPresentarProducto = { handleRequest, buildCopy, productMedia, planAnuncio, planOrganico, handleFrom, recipientFrom };
+globalThis.__aurelaPresentarProducto = {
+  filterImagesByStock, handleRequest, buildCopy, productMedia, planAnuncio, planOrganico, handleFrom, recipientFrom };

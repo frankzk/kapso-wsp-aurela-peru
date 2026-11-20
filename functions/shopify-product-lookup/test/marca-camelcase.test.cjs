@@ -27,4 +27,6 @@ assert.deepStrictEqual(L.productIdentityTokens("Pack de 10 Pares de Calcetines T
 assert.deepStrictEqual(L.productIdentityTokens("RestPro: Almohada de Tracción Inversa"), ["restpro"]);
 assert.deepStrictEqual(L.productIdentityTokens("Bamboo Cheese Board™ - Set Premium"), ["bamboo", "cheese", "board"]);
 assert.ok(L.extractProductNameCandidates("🧦 ¡10 pares!", "Descubre el Pack de 10 Pares de Calcetines Tribal, diseñados").includes("Pack de 10 Pares de Calcetines Tribal"));
+assert.ok(L.extractProductNameCandidates("💕 Soporte", "¡Conoce POSTUREFIT de SoyKora, el brasier...").includes("POSTUREFIT"), "marca tras Conoce");
+assert.ok(L.extractProductNameCandidates("🛡️ Fuerza", "✨ Descubre CRUCIS+, la pulsera magnetica").includes("CRUCIS"), "marca tras Descubre");
 console.log("OK: marcas en camelCase no se parten (RestPro no cae en SunnyRoll Pro)");

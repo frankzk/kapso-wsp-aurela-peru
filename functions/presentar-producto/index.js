@@ -192,8 +192,9 @@ function filterImagesByStock(product, images) {
     .map((u) => String(u).split("?")[0].replace(/^https?:/, "")));
   const file = (u) => slugColor(decodeURIComponent(String(u).split("?")[0].split("/").pop() || ""));
   const has = (u, vals) => [...vals].some((x) => file(u).includes(x));
+  const multi = (u) => /(^|-)(ambas|ambos|colores|todos|todas|variantes)(-|$)/.test(file(u)); // "crucis-ambas.jpg"
   const kept = images.filter((u) => !soldOutImgs.has(String(u).split("?")[0].replace(/^https?:/, ""))
-    && !(has(u, soldOutVals) && !has(u, availableVals)));
+    && !multi(u) && !(has(u, soldOutVals) && !has(u, availableVals)));
   if (!kept.length) return images;
   return [...kept.filter((u) => has(u, availableVals)), ...kept.filter((u) => !has(u, availableVals))];
 }

@@ -372,14 +372,45 @@ async function handleRequest(request, env = globalThis) {
   const response = await handleRequestCore(new Request(request.url || "https://fn.local/", { method: "POST", body: raw || "{}", headers: { "Content-Type": "application/json" } }), env);
   let payload = null;
   try { payload = JSON.parse(raw || "{}"); } catch { payload = null; }
-  if (!payload || payload.adSeed || payload.adDebug || payload.catalogDebug || !contactWithoutNumber(payload)) return response;
+  if (!payload || payload.adSeed || payload.adDebug || payload.catalogDebug) return response;
   try {
     const body = await response.clone().json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return response;
-    return json({ ...body, contactoSinNumero: true, pedirCelular: PEDIR_CELULAR });
+    let out = body;
+    let changed = false;
+    if (body.product && typeof body.product === "object") {
+      const stocked = withStockOnly(body.product);
+      if (stocked) { out = { ...out, ...stocked }; changed = true; }
+    }
+    if (contactWithoutNumber(payload)) { out = { ...out, contactoSinNumero: true, pedirCelular: PEDIR_CELULAR }; changed = true; }
+    return changed ? json(out) : response;
   } catch {
     return response;
   }
+}
+
+// Variantes agotadas (Crucis+ 20-11: solo Negro, y el bot listo "Cobre clasico, Negro" como colores disponibles porque
+// product.options trae todos los valores). Las opciones quedan solo con lo disponible; las variantes siguen con su
+// availableForSale para poder responder "esta agotado" si el cliente lo pide.
+function withStockOnly(product) {
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+  const avail = variants.filter((v) => v.availableForSale !== false);
+  const sold = variants.filter((v) => v.availableForSale === false);
+  if (!avail.length || !sold.length) return null;
+  const label = (v) => (v.title && v.title !== "Default Title" ? v.title : Object.values(v.selectedOptions || {}).join(" / "));
+  const availValues = new Set(avail.flatMap((v) => Object.values(v.selectedOptions || {}).map(String)));
+  const options = Array.isArray(product.options)
+    ? product.options.map((o) => (Array.isArray(o.values) ? { ...o, values: o.values.filter((x) => availValues.has(String(x))) } : o))
+    : product.options;
+  const disponibles = avail.map(label).filter(Boolean);
+  const agotados = sold.map(label).filter(Boolean);
+  return {
+    product: { ...product, options },
+    stock: { disponibles, agotados },
+    notaStock: `STOCK: solo hay disponible ${disponibles.join(", ")}. AGOTADO: ${agotados.join(", ")}. Ofrece y muestra SOLO lo `
+      + "disponible: nunca digas que hay varias opciones disponibles. Si el cliente pide lo agotado, dile con amabilidad que por "
+      + "ahora esta agotado y ofrecele el disponible.",
+  };
 }
 
 async function handleRequestCore(request, env = globalThis) {
@@ -774,6 +805,13 @@ function extractProductNameCandidates(headline, body) {
   // Admite numeros y hasta 7 palabras: "el Pack de 10 Pares de Calcetines Tribal" (antes se cortaba en "Pack de").
   const ourRe = new RegExp(`\\b(?:nuestr[oa]s?|el|la|los|las|tu|tus)\\s+([A-ZÁÉÍÓÚÑ][${W}]*(?:\\s+(?:de|del|para|con|y|a|natural|premium|pro|plus|\\d+|[A-ZÁÉÍÓÚÑ][${W}]*)){0,7})`, "g");
   while ((m = ourRe.exec(text)) !== null) push(m[1]);
+
+  // 2b) Marca tras "Conoce / Descubre / Te presentamos" (a menudo en MAYUSCULAS y sin ™: "¡Conoce POSTUREFIT de...").
+  const introRe = new RegExp(`\\b(?:conoce|descubre|presentamos|presentamos a|te presentamos)\\s+(?:a\\s+|el\\s+|la\\s+|los\\s+|las\\s+|nuestr[oa]s?\\s+)?([+${W}]{4,})`, "gi");
+  while ((m = introRe.exec(text)) !== null) {
+    const word = m[1].replace(/\+$/, "");
+    if (/[A-ZÁÉÍÓÚÑ]/.test(word[0] || "") && !/^(una|unos|unas|como|todo|todos|esta|este|nuestra|nuestro)$/i.test(word)) push(word);
+  }
 
   // 3) El titular completo como candidato de baja prioridad (a veces es el nombre).
   if (headline) push(String(headline).replace(/[^\p{L}\p{N}\s'’-]/gu, " ").trim());
@@ -1997,4 +2035,4 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-globalThis.__aurelaProductLookup = { contactWithoutNumber, productIdentityTokens, productDescriptorTokens, adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText, searchCatalogProducts, searchCategoryProducts, scoreCatalogProduct, scoreCategoryProduct, cleanProductQuery, detectCategoryQuery, publicProductToNormalized };
+globalThis.__aurelaProductLookup = { withStockOnly, contactWithoutNumber, productIdentityTokens, productDescriptorTokens, adReferralText, extractProductNameCandidates, extractHandleCandidates, extractInlineReferral, handleRequest, handler, loadPublicCatalog, resolveAdText, searchCatalogProducts, searchCategoryProducts, scoreCatalogProduct, scoreCategoryProduct, cleanProductQuery, detectCategoryQuery, publicProductToNormalized };

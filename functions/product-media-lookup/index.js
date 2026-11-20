@@ -73,7 +73,13 @@ async function handleRequest(request, env = {}) {
       });
     }
 
-    const photos = buildMediaItems(product, { limit, requestedVariant });
+    const stock = variantStock(product);
+    const photos = buildMediaItems(product, { limit, requestedVariant, stock });
+    const pidioAgotado = Boolean(requestedVariant) && stock.agotados.some((label) => {
+      const want = normalizeSearchText(requestedVariant);
+      const lab = normalizeSearchText(label);
+      return want && (want.includes(lab) || lab.includes(want));
+    });
 
     const wantVideoDebug = /videodebug/i.test(requestText);
     const videoRequested = detectVideoRequest(requestText, root) || wantVideoDebug;
@@ -122,14 +128,15 @@ async function handleRequest(request, env = {}) {
       product: productSummary(product, config.publicShopDomain),
       media,
       count: media.length,
+      ...(stock.agotados.length ? { stock: { disponibles: stock.disponibles, agotados: stock.agotados }, pidioAgotado } : {}),
       sendMediaInstructions: [
         "Usa la herramienta send_media para enviar cada item como media real de WhatsApp (los de type video como video, los de type image como imagen).",
         "No escribas ni pegues estas URLs en texto al cliente.",
         "No uses Markdown de imagen ni de enlace.",
       ].join(" "),
-      followUpText: videoRequested && !videoAvailable
+      followUpText: stockNote(stock, pidioAgotado) + (videoRequested && !videoAvailable
         ? "No hay video para este producto: avisa breve que por ahora no tienes video y envia las fotos reales. Luego ofrece precio y promo y cierra con la pregunta cerrada (1 vs 3x2)."
-        : "Te muestro la media real. Despues de enviarla, ofrece precio y promo y cierra con la pregunta cerrada de dos opciones (1 unidad/par vs 3x2). No preguntes si quiere saber el precio.",
+        : "Te muestro la media real. Despues de enviarla, ofrece precio y promo y cierra con la pregunta cerrada de dos opciones (1 unidad/par vs 3x2). No preguntes si quiere saber el precio."),
     });
   } catch (error) {
     return json({
@@ -453,7 +460,14 @@ function buildMediaItems(product, options) {
   const items = [];
   const seenUrls = new Set();
 
+  const stock = options.stock || { agotados: [], soldOutSlugs: [], availableSlugs: [] };
+  const soldOutFile = (url) => {
+    const file = slugText(decodeURIComponent(String(url).split("?")[0].split("/").pop() || ""));
+    if (stock.agotados.length && MULTI_VARIANT_FILE.test(file)) return true; // "crucis-ambas.jpg": muestra todos los colores
+    return stock.soldOutSlugs.some((x) => file.includes(x)) && !stock.availableSlugs.some((x) => file.includes(x));
+  };
   for (const variant of product.variants || []) {
+    if (variant.available === false && stock.disponibles?.length) continue;
     const url = normalizeMediaUrl(
       variant.featured_image?.src ||
       variant.featured_image ||
@@ -477,7 +491,7 @@ function buildMediaItems(product, options) {
 
   for (const image of product.images || []) {
     const url = normalizeMediaUrl(image?.src || image);
-    if (!url || seenUrls.has(url)) continue;
+    if (!url || seenUrls.has(url) || soldOutFile(url)) continue;
     seenUrls.add(url);
     items.push(imageItem(product, `Foto ${items.length + 1}`, url));
     if (items.length >= limit) return items;
@@ -489,6 +503,39 @@ function buildMediaItems(product, options) {
   }
 
   return items.slice(0, limit);
+}
+
+// Variantes agotadas (caso Crucis+ 20-11: solo Negro; el bot mando la foto del cobre clasico y escribio "ambos colores
+// disponibles"). Sus fotos no se envian y la respuesta le dice al agente que solo ofrezca lo disponible.
+const MULTI_VARIANT_FILE = /(^|-)(ambas|ambos|colores|todos|todas|variantes)(-|$)/;
+
+function slugText(v) {
+  return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function variantStock(product) {
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+  const label = (v) => (v.title && v.title !== "Default Title" ? v.title : [v.option1, v.option2, v.option3].filter(Boolean).join(" / "));
+  const vals = (v) => [v.option1, v.option2, v.option3].filter(Boolean).map(slugText).filter((x) => x.length >= 4);
+  const avail = variants.filter((v) => v.available !== false);
+  const sold = variants.filter((v) => v.available === false);
+  if (!avail.length || !sold.length) return { disponibles: [], agotados: [], soldOutSlugs: [], availableSlugs: [] };
+  const availableSlugs = [...new Set(avail.flatMap(vals))];
+  return {
+    disponibles: avail.map(label).filter(Boolean),
+    agotados: sold.map(label).filter(Boolean),
+    availableSlugs,
+    soldOutSlugs: [...new Set(sold.flatMap(vals))].filter((x) => !availableSlugs.includes(x)),
+  };
+}
+
+function stockNote(stock, pidioAgotado) {
+  if (!stock.agotados.length) return "";
+  const base = `STOCK: solo hay disponible ${stock.disponibles.join(", ")}. AGOTADO: ${stock.agotados.join(", ")}. `
+    + "Ofrece y muestra SOLO lo disponible; nunca digas que hay varios colores/tallas disponibles ni pongas en un caption que algo agotado esta disponible. ";
+  return pidioAgotado
+    ? base + "El cliente pidio una opcion AGOTADA: dile con amabilidad que por ahora esta agotada y ofrecele la disponible con estas fotos. "
+    : base;
 }
 
 function imageItem(product, label, url) {
@@ -964,6 +1011,8 @@ function json(body, status = 200) {
 }
 
 globalThis.__aurelaProductMediaLookup = {
+  variantStock,
+  stockNote,
   whatsappImageUrl,
   buildMediaItems,
   detectVideoRequest,

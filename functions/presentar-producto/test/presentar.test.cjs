@@ -64,7 +64,7 @@ const inbWeb = { kapso: { direction: "inbound", phone_number: "51987654321" }, t
   const P = globalThis.__aurelaPresentarProducto;
   const prod = { variants: [{ option1: "Cobre clásico", available: false }, { option1: "Negro", available: true }] };
   const imgs = ["https://a/crucis-ambas.jpg", "https://a/crucis-cobre-clasico-3x4.jpg", "https://a/crucis-negro.jpg"];
-  assert.deepStrictEqual(P.filterImagesByStock(prod, imgs), ["https://a/crucis-negro.jpg", "https://a/crucis-ambas.jpg"]);
+  assert.deepStrictEqual(P.filterImagesByStock(prod, imgs), ["https://a/crucis-negro.jpg"], "ni el agotado ni la de ambos colores");
   assert.strictEqual(P.filterImagesByStock({ variants: [{ title: "Default Title", available: true }] }, imgs).length, 3, "sin variantes no toca nada");
   console.log("OK: fotos de colores agotados fuera");
 }
